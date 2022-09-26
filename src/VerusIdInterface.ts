@@ -1,6 +1,6 @@
 import { AxiosRequestConfig } from "axios";
 import {
-  GetIdentityResponse
+  GetIdentityResponse, LoginConsentRequest, LoginConsentRequestInterface, LoginConsentChallengeInterface, VerusIDSignature, LOGIN_CONSENT_REQUEST_SIG_VDXF_KEY, LoginConsentChallenge
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import { IdentitySignature, ECPair, networks, address } from "@bitgo/utxo-lib";
@@ -34,7 +34,7 @@ class VerusIdInterface {
     getIdentityResult?: GetIdentityResponse["result"],
     currentHeight?: number,
     chainIAddr?: string
-  ) {
+  ): Promise<string> {
     let identity;
     let height;
     let chainId;
@@ -106,15 +106,18 @@ class VerusIdInterface {
 
     const sig = new IdentitySignature(networks[this.interface.chain]);
 
-    if (chainIAddr != null) chainId = chainIAddr
-    else chainId = await this.getChainId()
+    if (chainIAddr != null) chainId = chainIAddr;
+    else chainId = await this.getChainId();
 
     sig.fromBuffer(Buffer.from(base64Sig, "base64"), 0, chainId, iAddress);
 
     if (getIdentityResult != null) {
       identityAtHeight = getIdentityResult;
     } else {
-      const _idresatheight = await this.interface.getIdentity(iAddrOrIdentity, sig.blockHeight);
+      const _idresatheight = await this.interface.getIdentity(
+        iAddrOrIdentity,
+        sig.blockHeight
+      );
       if (_idresatheight.error) throw new Error(_idresatheight.error.message);
       identityAtHeight = _idresatheight.result!;
     }
@@ -165,23 +168,87 @@ class VerusIdInterface {
       iAddress = identity.identity.identityaddress!;
     }
 
-    if (chainIAddr != null) chainId = chainIAddr
-    else chainId = await this.getChainId()
+    if (chainIAddr != null) chainId = chainIAddr;
+    else chainId = await this.getChainId();
 
     const sig = new IdentitySignature(networks[this.interface.chain]);
 
-    sig.fromBuffer(
-      Buffer.from(base64Sig, "base64"),
-      0,
-      chainId,
-      iAddress
-    );
+    sig.fromBuffer(Buffer.from(base64Sig, "base64"), 0, chainId, iAddress);
 
     return {
       version: sig.version,
       hashtype: sig.hashType,
       height: sig.blockHeight,
     };
+  }
+
+  async signLoginConsentRequest(
+    request: LoginConsentRequestInterface,
+    primaryAddrWif: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number
+  ): Promise<LoginConsentRequest> {
+    const req = new LoginConsentRequest(request);
+    const sig = await this.signMessage(
+      req.signing_id,
+      req.getSignedData(),
+      primaryAddrWif,
+      getIdentityResult,
+      currentHeight,
+      req.system_id
+    );
+
+    req.signature = new VerusIDSignature(
+      { signature: sig },
+      LOGIN_CONSENT_REQUEST_SIG_VDXF_KEY
+    );
+
+    return req;
+  }
+
+  async createLoginConsentRequest(
+    signingId: string,
+    challenge: LoginConsentChallengeInterface,
+    primaryAddrWif?: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number,
+    chainIAddr?: string
+  ): Promise<LoginConsentRequest> {
+    let chainId: string;
+
+    if (chainIAddr != null) chainId = chainIAddr;
+    else chainId = await this.getChainId();
+
+    const req = new LoginConsentRequest({
+      system_id: chainId,
+      signing_id: signingId,
+      challenge: new LoginConsentChallenge(challenge),
+    });
+
+    if (primaryAddrWif) {
+      return this.signLoginConsentRequest(
+        req,
+        primaryAddrWif,
+        getIdentityResult,
+        currentHeight
+      );
+    } else return req;
+  }
+
+  async verifyLoginConsentRequest(
+    request: LoginConsentRequestInterface,
+    getIdentityResult?: GetIdentityResponse["result"],
+    chainIAddr?: string
+  ): Promise<boolean> {
+    const req = new LoginConsentRequest(request);
+
+    return this.verifyMessage(
+      req.signing_id,
+      req.signature!.signature,
+      req.getSignedData(),
+      getIdentityResult,
+      chainIAddr
+    );
   }
 }
 
