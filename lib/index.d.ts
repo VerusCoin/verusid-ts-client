@@ -1,2 +1,3 @@
 import VerusIdInterface from "./VerusIdInterface";
-export { VerusIdInterface };
+import * as primitives from "verus-typescript-primitives";
+export { VerusIdInterface, primitives };
