@@ -12,6 +12,7 @@ import {
   LoginConsentProvisioningDecision,
   LoginConsentProvisioningResponse,
   LOGIN_CONSENT_RESPONSE_SIG_VDXF_KEY,
+  GetBlockResponse,
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -20,10 +21,13 @@ import {
   networks,
   address
 } from "@bitgo/utxo-lib";
+import { BlockInfo } from "verus-typescript-primitives/dist/block/BlockInfo";
+import BigNumber from "bignumber.js"
 
 const VRSC_I_ADDRESS = "i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV"
 const ID_SIG_VERSION = 1
 const ID_SIG_TYPE = 1
+const LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD = 3600
 
 class VerusIdInterface {
   interface: VerusdRpcInterface;
@@ -328,7 +332,7 @@ class VerusIdInterface {
     const req = new LoginConsentRequest({
       system_id: chainId,
       signing_id: signingId,
-      challenge
+      challenge,
     });
 
     if (primaryAddrWif) {
@@ -344,13 +348,33 @@ class VerusIdInterface {
   async verifyLoginConsentRequest(
     request: LoginConsentRequest,
     getIdentityResult?: GetIdentityResponse["result"],
-    chainIAddr?: string
+    chainIAddr?: string,
+    sigBlockTime?: number
   ): Promise<boolean> {
     const sigInfo = await this.getSignatureInfo(
       request.signing_id,
       request.signature!.signature,
       chainIAddr
     );
+
+    let blocktime;
+
+    if (sigBlockTime) blocktime = sigBlockTime;
+    else {
+      const _blockres = await this.interface.getBlock(sigInfo.height);
+      if (_blockres.error) throw new Error(_blockres.error.message);
+
+      blocktime = (_blockres.result as BlockInfo).time;
+    }
+
+    if (
+      BigNumber(blocktime)
+        .minus(request.challenge.created_at)
+        .abs()
+        .isGreaterThan(LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD)
+    ) {
+      return false
+    }
 
     return this.verifyHash(
       request.signing_id,
@@ -475,7 +499,7 @@ class VerusIdInterface {
       getIdentityResult,
       currentHeight,
       chainIAddr
-    )
+    );
   }
 
   async verifyLoginConsentResponse(
@@ -515,7 +539,7 @@ class VerusIdInterface {
       getIdentityResult,
       currentHeight,
       chainIAddr
-    )
+    );
   }
 
   async verifyVerusIdProvisioningResponse(
@@ -530,14 +554,17 @@ class VerusIdInterface {
     const keyPair = ECPair.fromWIF(wif, networks.verus);
 
     const sig = new IdentitySignature(networks.verus);
-    return sig.signHashOffline(hash, keyPair).toString('base64');
+    return sig.signHashOffline(hash, keyPair).toString("base64");
   }
 
   static async signVerusIdProvisioningRequest(
     request: LoginConsentProvisioningRequest,
     addrWif: string
   ): Promise<LoginConsentProvisioningRequest> {
-    const sig = VerusIdInterface.signHashWithAddress(request.getChallengeHash(), addrWif);
+    const sig = VerusIdInterface.signHashWithAddress(
+      request.getChallengeHash(),
+      addrWif
+    );
 
     request.signature = new VerusIDSignature(
       { signature: sig },

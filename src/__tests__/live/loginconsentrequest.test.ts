@@ -23,7 +23,7 @@ describe('Creates and validates login consent requests', () => {
             primitives.LOGIN_CONSENT_REDIRECT_VDXF_KEY.vdxfid
           ),
         ],
-        created_at: 1664206317,
+        created_at: 1527992841,
       }),
       "UrEJQMk9PD4Fo9i8FNb1ZSFRrC9TrD4j6CGbFvbFHVH83bStroHH",
       TEST_ID,
@@ -36,7 +36,7 @@ describe('Creates and validates login consent requests', () => {
       new primitives.LoginConsentDecision({
         decision_id: "iKNufKJdLX3Xg8qFru9AuLBvivAEJ88PW4",
         request: req,
-        created_at: 1664246317,
+        created_at: 1527992841,
       }),
       "UrEJQMk9PD4Fo9i8FNb1ZSFRrC9TrD4j6CGbFvbFHVH83bStroHH",
       TEST_ID,
