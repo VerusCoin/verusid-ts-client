@@ -3248,9 +3248,9 @@ varuint-bitcoin@1.0.4:
     bs58check "https://github.com/bitcoinjs/bs58check"
     create-hash "1.2.0"
 
-"verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git#75252ddc8251381261809cb88e827c17af116225":
+"verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git#1a6906865050c1e856133d8524083b9f91e4ef86":
   version "1.0.0"
-  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#75252ddc8251381261809cb88e827c17af116225"
+  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#1a6906865050c1e856133d8524083b9f91e4ef86"
   dependencies:
     "@types/bs58check" "2.1.0"
     "@types/create-hash" "1.2.2"
