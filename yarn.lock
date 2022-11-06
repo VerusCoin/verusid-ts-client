@@ -973,7 +973,7 @@ asynckit@^0.4.0:
   resolved "https://registry.yarnpkg.com/asynckit/-/asynckit-0.4.0.tgz#c79ed97f7f34cb8f2ba1bc9790bcc366474b4b79"
   integrity sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==
 
-axios@0.27.2, axios@^0.27.2:
+axios@0.27.2:
   version "0.27.2"
   resolved "https://registry.yarnpkg.com/axios/-/axios-0.27.2.tgz#207658cc8621606e586c85db4b41a750e756d972"
   integrity sha512-t+yRIyySRTp/wua5xEr+z1q60QmLq8ABsS5O9Me1AsE5dfKqgnCFzwiCZZ/cGNd1lq4/7akDWMxdhVlucjmnOQ==
@@ -3238,16 +3238,6 @@ varuint-bitcoin@1.0.4:
   resolved "https://registry.yarnpkg.com/varuint-bitcoin/-/varuint-bitcoin-1.0.4.tgz#d812c5dae16e32f60544b6adee1d4be1307d0283"
   integrity sha512-2nW4pVicYWxOMY1u+3T3eFXw24wbFlKz+ug7hd02rozYmeFVBoC6LB7/P4E46jN9aD1ezhX01g2Uh4zrZ+9RWw==
 
-"verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git":
-  version "1.0.0"
-  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#62a2946aa3e8c8074a25c07d05038e7c67a046c2"
-  dependencies:
-    "@types/bs58check" "2.1.0"
-    "@types/create-hash" "1.2.2"
-    base64url "3.0.1"
-    bs58check "https://github.com/bitcoinjs/bs58check"
-    create-hash "1.2.0"
-
 "verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb":
   version "1.0.0"
   resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb"
@@ -3258,12 +3248,12 @@ varuint-bitcoin@1.0.4:
     bs58check "https://github.com/bitcoinjs/bs58check"
     create-hash "1.2.0"
 
-"verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git#ecd5734ee42c03e1f2dcec936f16571bcb3f81cb":
+"verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git#aabeadd849667e9892f8458c12d1522c41b8001b":
   version "0.1.0"
-  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#ecd5734ee42c03e1f2dcec936f16571bcb3f81cb"
+  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#aabeadd849667e9892f8458c12d1522c41b8001b"
   dependencies:
-    axios "^0.27.2"
-    verus-typescript-primitives "https://github.com/VerusCoin/verus-typescript-primitives.git"
+    axios "0.27.2"
+    verus-typescript-primitives "https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb"
 
 walker@^1.0.8:
   version "1.0.8"
