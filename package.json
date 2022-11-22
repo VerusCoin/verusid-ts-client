@@ -45,7 +45,7 @@
     "lib/**/*"
   ],
   "dependencies": {
-    "@bitgo/utxo-lib": "https://github.com/VerusCoin/BitGoJS.git#7cfa8afb1d1aa9692c2322283d044aefd071457f",
+    "@bitgo/utxo-lib": "https://github.com/VerusCoin/BitGoJS.git#1619f87dac70a40de8d272f0c21f2bd428d644f7",
     "axios": "0.27.2",
     "bignumber.js": "9.1.0",
     "verus-typescript-primitives": "https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb",
