@@ -305,9 +305,9 @@
     "@bitgo/blake2b-wasm" "^3.0.1"
     nanoassert "^2.0.0"
 
-"@bitgo/utxo-lib@https://github.com/VerusCoin/BitGoJS.git#dceba5dc289c34a1d767d7d79e9b5d7161d0c8da":
+"@bitgo/utxo-lib@https://github.com/VerusCoin/BitGoJS.git#7cfa8afb1d1aa9692c2322283d044aefd071457f":
   version "1.9.6"
-  resolved "https://github.com/VerusCoin/BitGoJS.git#dceba5dc289c34a1d767d7d79e9b5d7161d0c8da"
+  resolved "https://github.com/VerusCoin/BitGoJS.git#7cfa8afb1d1aa9692c2322283d044aefd071457f"
   dependencies:
     "@bitgo/blake2b" "3.0.1"
     bech32 "0.0.3"
@@ -3238,9 +3238,8 @@ varuint-bitcoin@1.0.4:
   resolved "https://registry.yarnpkg.com/varuint-bitcoin/-/varuint-bitcoin-1.0.4.tgz#d812c5dae16e32f60544b6adee1d4be1307d0283"
   integrity sha512-2nW4pVicYWxOMY1u+3T3eFXw24wbFlKz+ug7hd02rozYmeFVBoC6LB7/P4E46jN9aD1ezhX01g2Uh4zrZ+9RWw==
 
-"verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb":
+verus-typescript-primitives@../verus-typescript-primitives/, "verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb":
   version "1.0.0"
-  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb"
   dependencies:
     "@types/bs58check" "2.1.0"
     "@types/create-hash" "1.2.2"
@@ -3248,9 +3247,8 @@ varuint-bitcoin@1.0.4:
     bs58check "https://github.com/bitcoinjs/bs58check"
     create-hash "1.2.0"
 
-"verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git#aabeadd849667e9892f8458c12d1522c41b8001b":
+verusd-rpc-ts-client@../verusd-rpc-ts-client/:
   version "0.1.0"
-  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#aabeadd849667e9892f8458c12d1522c41b8001b"
   dependencies:
     axios "0.27.2"
     verus-typescript-primitives "https://github.com/VerusCoin/verus-typescript-primitives.git#4cc793e54303938c4a968130ca7279b9c246acfb"
