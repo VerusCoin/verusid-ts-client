@@ -25,8 +25,8 @@ import { BlockInfo } from "verus-typescript-primitives/dist/block/BlockInfo";
 import BigNumber from "bignumber.js"
 
 const VRSC_I_ADDRESS = "i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV"
-const ID_SIG_VERSION = 1
-const ID_SIG_TYPE = 1
+const ID_SIG_VERSION = 2
+const ID_SIG_TYPE = 5
 const LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD = 3600
 
 class VerusIdInterface {
