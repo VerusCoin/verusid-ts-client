@@ -49,6 +49,6 @@
     "axios": "0.27.2",
     "bignumber.js": "9.1.0",
     "verus-typescript-primitives": "https://github.com/VerusCoin/verus-typescript-primitives.git#bc13937aa4d1d17c7b4c674ad570a11be056f232",
-    "verusd-rpc-ts-client": "https://github.com/VerusCoin/verusd-rpc-ts-client.git#f91e59335f2a6ce83070110867ef89a05263755a"
+    "verusd-rpc-ts-client": "https://github.com/VerusCoin/verusd-rpc-ts-client.git#67476e820ca0f4fdef7a66b55621f90017faa50e"
   }
 }

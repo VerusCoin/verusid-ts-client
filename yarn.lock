@@ -3257,9 +3257,9 @@ varuint-bitcoin@1.0.4:
     bs58check "https://github.com/bitcoinjs/bs58check"
     create-hash "1.2.0"
 
-"verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git#f91e59335f2a6ce83070110867ef89a05263755a":
+"verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git#67476e820ca0f4fdef7a66b55621f90017faa50e":
   version "0.1.0"
-  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#f91e59335f2a6ce83070110867ef89a05263755a"
+  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#67476e820ca0f4fdef7a66b55621f90017faa50e"
   dependencies:
     axios "0.27.2"
     verus-typescript-primitives "https://github.com/VerusCoin/verus-typescript-primitives.git#bc13937aa4d1d17c7b4c674ad570a11be056f232"
