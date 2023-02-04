@@ -735,9 +735,9 @@
   integrity sha512-wOuvG1SN4Us4rez+tylwwwCV1psiNVOkJeM3AUWUNWg/jDQY2+HE/444y5gc+jBmRqASOm2Oeh5c1axHobwRKQ==
 
 "@types/node@*":
-  version "18.6.5"
-  resolved "https://registry.yarnpkg.com/@types/node/-/node-18.6.5.tgz#06caea822caf9e59d5034b695186ee74154d2802"
-  integrity sha512-Xjt5ZGUa5WusGZJ4WJPbOT8QOqp6nDynVFRKcUt32bOgvXEoc6o085WNkYTMO7ifAj2isEfQQ2cseE+wT6jsRw==
+  version "18.11.18"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-18.11.18.tgz#8dfb97f0da23c2293e554c5a50d61ef134d7697f"
+  integrity sha512-DHQpWGjyQKSHj3ebjFI/wRKcqQcdR+MoFBygntYOZytCqNfkd2ZC4ARDJ2DQqhjH5p85Nnd3jhUJIXrszFX/JA==
 
 "@types/node@10.12.18":
   version "10.12.18"
@@ -3247,9 +3247,9 @@ varuint-bitcoin@1.0.4:
   resolved "https://registry.yarnpkg.com/varuint-bitcoin/-/varuint-bitcoin-1.0.4.tgz#d812c5dae16e32f60544b6adee1d4be1307d0283"
   integrity sha512-2nW4pVicYWxOMY1u+3T3eFXw24wbFlKz+ug7hd02rozYmeFVBoC6LB7/P4E46jN9aD1ezhX01g2Uh4zrZ+9RWw==
 
-"verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git#22f46e6e408b35d48849a5c0ecf3e23fe14c45ca":
+"verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git":
   version "1.0.0"
-  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#22f46e6e408b35d48849a5c0ecf3e23fe14c45ca"
+  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#d151fd70ca21b4100e4e4bc55945483ffeb787e4"
   dependencies:
     "@types/bs58check" "2.1.0"
     "@types/create-hash" "1.2.2"
@@ -3257,12 +3257,12 @@ varuint-bitcoin@1.0.4:
     bs58check "https://github.com/bitcoinjs/bs58check"
     create-hash "1.2.0"
 
-"verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git#4a0ba36fffccb54bf1c62f7ec71f262cff2cf48e":
+"verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git":
   version "0.1.0"
-  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#4a0ba36fffccb54bf1c62f7ec71f262cff2cf48e"
+  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#65c85f270753d0ab5227118bc25f045562f34cc2"
   dependencies:
     axios "0.27.2"
-    verus-typescript-primitives "https://github.com/VerusCoin/verus-typescript-primitives.git#22f46e6e408b35d48849a5c0ecf3e23fe14c45ca"
+    verus-typescript-primitives "https://github.com/VerusCoin/verus-typescript-primitives.git"
 
 walker@^1.0.8:
   version "1.0.8"
