@@ -95,8 +95,12 @@ describe('Creates and validates login consent requests', () => {
           fully_qualified_name: "test.verus",
           parent: "i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV",
           info_uri: "127.0.0.1",
-          provisioning_txid:
-            "021ef1baae4a69d36765fc781c7396147712feef4328594d134ed865bcce30fb",
+          provisioning_txids: [
+            new primitives.ProvisioningTxid(
+              "f5a68faabd7f89bfe8e634c06cce85dfeb068f7320f8f342626e85a489cc2fa2",
+              primitives.IDENTITY_UPDATE_TXID.vdxfid
+            ),
+          ],
         }),
         request: req,
       }),

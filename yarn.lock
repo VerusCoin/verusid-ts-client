@@ -3249,7 +3249,7 @@ varuint-bitcoin@1.0.4:
 
 "verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git":
   version "1.0.0"
-  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#23b0ef2490a25f7e751e776e4edba3f2f14ab4d1"
+  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#81db46ee860a62b2b7c30b76d4fc50ebc48c6374"
   dependencies:
     "@types/bs58check" "2.1.0"
     "@types/create-hash" "1.2.2"
@@ -3259,7 +3259,7 @@ varuint-bitcoin@1.0.4:
 
 "verusd-rpc-ts-client@https://github.com/VerusCoin/verusd-rpc-ts-client.git":
   version "0.1.0"
-  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#c3f9092a6dbbececa68a8599ea77fb768ab7a61f"
+  resolved "https://github.com/VerusCoin/verusd-rpc-ts-client.git#c886ca3a68d4e0dd5d76b479ee98388e57c4e2ab"
   dependencies:
     axios "0.27.2"
     verus-typescript-primitives "https://github.com/VerusCoin/verus-typescript-primitives.git"

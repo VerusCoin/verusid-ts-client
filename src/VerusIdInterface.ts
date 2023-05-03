@@ -596,7 +596,7 @@ class VerusIdInterface {
     const sig = new IdentitySignature(
       networks.verus,
       ID_SIG_VERSION,
-      null,
+      ID_SIG_TYPE,
       null,
       [Buffer.from(request.signature!.signature, "base64")]
     );
