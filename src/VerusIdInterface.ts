@@ -12,7 +12,8 @@ import {
   LoginConsentProvisioningDecision,
   LoginConsentProvisioningResponse,
   LOGIN_CONSENT_RESPONSE_SIG_VDXF_KEY,
-  GetBlockResponse,
+  SignedSessionObject,
+  SignedSessionObjectData,
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -468,6 +469,84 @@ class VerusIdInterface {
       getIdentityResult,
       chainIAddr
     );
+  }
+
+  async verifySignedSessionObject(
+    object: SignedSessionObject,
+    getIdentityResult?: GetIdentityResponse["result"],
+    chainIAddr?: string
+  ): Promise<boolean> {
+    const sigInfo = await this.getSignatureInfo(
+      object.signing_id,
+      object.signature!.signature,
+      chainIAddr
+    );
+
+    return this.verifyHash(
+      object.signing_id,
+      object.signature!.signature,
+      object.getDataHash(sigInfo.height),
+      getIdentityResult,
+      chainIAddr
+    );
+  }
+
+  async signSessionObject(
+    object: SignedSessionObject,
+    primaryAddrWif: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number
+  ): Promise<SignedSessionObject> {
+    let height = currentHeight;
+
+    if (height == null) {
+      height = await this.getCurrentHeight();
+    }
+
+    const sig = await this.signHash(
+      object.signing_id,
+      object.getDataHash(height),
+      primaryAddrWif,
+      getIdentityResult,
+      height,
+      object.system_id
+    );
+
+    object.signature = new VerusIDSignature(
+      { signature: sig },
+      LOGIN_CONSENT_RESPONSE_SIG_VDXF_KEY
+    );
+
+    return object;
+  }
+
+  async createSignedSessionObject(
+    signingId: string,
+    data: SignedSessionObjectData,
+    primaryAddrWif?: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number,
+    chainIAddr?: string
+  ): Promise<SignedSessionObject> {
+    let chainId: string;
+
+    if (chainIAddr != null) chainId = chainIAddr;
+    else chainId = await this.getChainId();
+
+    const object = new SignedSessionObject({
+      signing_id: signingId,
+      data,
+      system_id: chainId
+    })
+
+    if (primaryAddrWif) {
+      return this.signSessionObject(
+        object,
+        primaryAddrWif,
+        getIdentityResult,
+        currentHeight
+      );
+    } else return object;
   }
 
   async signLoginConsentResponse(
