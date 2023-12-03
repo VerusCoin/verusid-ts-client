@@ -22,7 +22,7 @@ describe('Creates and validates VerusPay v3+ invoices', () => {
       VERUSTEST_I_ADDR
     );
 
-    expect(req.toQrString()).toBe("dgCq8t3nk3reqeFQANTiwij8jmIBMAGkn67HAAIUAC0zEcOL_SGQktKu9EmAS-izvv6m756iNWNeMoEk_zQp25-ekbZOLQ");
+    expect(req.toQrString()).toBe("dgCq8t3nk3reqeFQANTiwij8jmIDMAGkn67HAAIUAC0zEcOL_SGQktKu9EmAS-izvv6m756iNWNeMoEk_zQp25-ekbZOLQ");
   });
 
   test('can create, sign, and verify a basic VerusPay v3 invoice', async () => {

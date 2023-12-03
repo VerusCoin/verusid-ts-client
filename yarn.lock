@@ -3256,7 +3256,7 @@ varuint-bitcoin@1.0.4:
 
 "verus-typescript-primitives@https://github.com/VerusCoin/verus-typescript-primitives.git":
   version "1.0.0"
-  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#144f7510ac3b7fc3a7ab2c6cf2cfcec25db525f7"
+  resolved "https://github.com/VerusCoin/verus-typescript-primitives.git#3eafcef030fcb8ed3639b38880c3fd7bb08cf190"
   dependencies:
     base64url "3.0.1"
     bn.js "5.2.1"
