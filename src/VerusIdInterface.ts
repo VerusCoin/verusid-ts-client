@@ -16,16 +16,24 @@ import {
   SignedSessionObjectData,
   VerusPayInvoice,
   VerusPayInvoiceDetails,
+  Identity,
+  GetAddressUtxosResponse,
+  GetRawTransactionResponse,
+  FundRawTransactionResponse,
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
   IdentitySignature,
   ECPair,
   networks,
-  address
+  address,
+  smarttxs,
+  Transaction
 } from "@bitgo/utxo-lib";
 import { BlockInfo } from "verus-typescript-primitives/dist/block/BlockInfo";
 import BigNumber from "bignumber.js"
+
+const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
 const VRSC_I_ADDRESS = "i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV"
 const ID_SIG_VERSION = 2
@@ -47,7 +55,7 @@ class VerusIdInterface {
   }
 
   async getChainId() {
-    if (this.interface.chain === "VRSC") {
+    if (this.interface.chain === "VRSC" || this.interface.chain === VRSC_I_ADDRESS) {
       return VRSC_I_ADDRESS;
     } else {
       const _currres = await this.interface.getCurrency(this.interface.chain);
@@ -768,6 +776,186 @@ class VerusIdInterface {
     );
 
     return sig.verifyHashOffline(request.getChallengeHash(), address)[0];
+  }
+
+  async createUpdateIdentityTransaction(
+    identity: Identity,
+    changeAddress: string,
+    utxoList: GetAddressUtxosResponse["result"],
+    chainIAddr?: string,
+    fee: number = 0.0001,
+    fundRawTransactionResult?: FundRawTransactionResponse["result"],
+    getIdentityResult?: GetIdentityResponse["result"],
+    identityTransactionResult?: GetRawTransactionResponse["result"],
+    currentHeight?: number
+  ): Promise<{hex: string, utxos: GetAddressUtxosResponse["result"]}> {
+    let height = currentHeight;
+    let chainId: string;
+
+    if (height == null) {
+      height = await this.getCurrentHeight();
+    }
+    
+    const unfundedTxHex = createUnfundedIdentityUpdate(identity, networks.verus, height + 20);
+
+    let fundedTxHex;
+
+    if (fundRawTransactionResult == null) {
+      const _fundRawTxRes = await this.interface.fundRawTransaction(
+        unfundedTxHex,
+        utxoList.map(utxo => {
+          return {
+            voutnum: utxo.outputIndex,
+            txid: utxo.txid,
+          };
+        }),
+        changeAddress,
+        fee
+      );
+
+      if (_fundRawTxRes.error) throw new Error("Couldn't fund raw transaction")
+      else fundedTxHex = _fundRawTxRes.result.hex;
+    } else fundedTxHex = fundRawTransactionResult.hex;
+
+    if (chainIAddr != null) chainId = chainIAddr;
+    else chainId = await this.getChainId();
+
+    const validation = validateFundedCurrencyTransfer(
+      chainId,
+      fundedTxHex,
+      unfundedTxHex,
+      changeAddress,
+      networks.verus,
+      utxoList
+    )
+
+    const deltas = new Map();
+
+    if (!validation.valid) throw new Error(validation.message);
+    else {
+      for (const key in validation.sent) {
+        if (BigNumber(validation.sent[key]).isGreaterThan(BigNumber(0))) {
+          throw new Error("Cannot send currency and update ID.")
+        }
+      }
+
+      for (const key in validation.fees) {
+        if (deltas.has(key)) deltas.set(key, deltas.get(key).minus(BigNumber(validation.fees[key])))
+        else deltas.set(key, BigNumber(validation.fees[key]).multipliedBy(BigNumber(-1)))
+      }
+    };
+
+    const feeSatoshis = BigNumber(fee).multipliedBy(BigNumber(10).pow(BigNumber(8)));
+    deltas.forEach((value, key) => {
+      if ((key !== chainId || value.isGreaterThan(0)) || (key === chainId && value.multipliedBy(-1).isGreaterThan(feeSatoshis))) {
+        throw new Error("Incorrect fee.")
+      }
+    })
+
+    let idResponse: GetIdentityResponse["result"];
+
+    if (getIdentityResult == null) {
+      const _idres = await this.interface.getIdentity(identity.getIdentityAddress());
+      if (_idres.error) throw new Error(_idres.error.message);
+  
+      idResponse = _idres.result!;
+    } else idResponse = getIdentityResult;
+    
+    const { txid, vout } = idResponse;
+
+    let rawTxResponse: GetRawTransactionResponse["result"];
+
+    if (identityTransactionResult == null) {
+      const rawtxres = await this.interface.getRawTransaction(txid);
+      if (rawtxres.error) throw new Error(rawtxres.error.message);
+
+      rawTxResponse = rawtxres.result!;
+    } else rawTxResponse = identityTransactionResult;
+    
+    const identityTransaction = Transaction.fromHex(rawTxResponse, networks.verus);
+
+    if (typeof vout !== 'number' || vout > (identityTransaction.outs.length - 1) || vout < 0) {
+      throw new Error("Identity output not found");
+    }
+
+    const fundedTx = Transaction.fromHex(fundedTxHex, networks.verus);
+    const utxosUsed: GetAddressUtxosResponse["result"] = [];
+
+    // Add funding UTXOs to utxosUsed
+    fundedTx.ins.forEach((input: {
+      hash: Buffer,
+      index: number,
+      script: Buffer,
+      sequence: BigNumber,
+      witness: Array<any>
+    }) => {
+      const inputFromList = utxoList.find(utxo => {
+        const inputHash = Buffer.from(input.hash).reverse().toString('hex');
+
+        return utxo.txid === inputHash && utxo.outputIndex === input.index;
+      });
+
+      if (inputFromList) {
+        utxosUsed.push(inputFromList);
+      } else throw new Error("Input not found in UTXO list");
+    })
+
+    // Add ID defintion to identity update tx hex
+    const completeIdentityUpdate: string = completeFundedIdentityUpdate(
+      fundedTxHex,
+      networks.verus,
+      utxoList.map(x => Buffer.from(x.script, 'hex')),
+      {
+        hash: Buffer.from(txid, 'hex').reverse(),
+        index: vout,
+        script: identityTransaction.outs[vout].script,
+        sequence: 4294967295
+      }
+    )
+
+    // Add ID definition UTXO to utxosUsed
+    utxosUsed.push({
+      address: idResponse.identity.identityaddress!,
+      txid: txid,
+      outputIndex: vout,
+      script: identityTransaction.outs[vout].script.toString('hex'),
+      satoshis: 0,
+      height: idResponse.blockheight,
+      isspendable: 0,
+      blocktime: 0 // Filled in to avoid getblock call because blocktime is not currently checked for the ID definition utxo
+    })
+
+    return { hex: completeIdentityUpdate, utxos: utxosUsed };
+  }
+
+  /**
+   * 
+   * @param unsignedTxHex The unsigned transaction hex
+   * @param inputs A list of UTXOs that are being used as inputs for the transaction, in the order they appear in the unsigned tx
+   * @param keys A list of WIF keys that correspond to the UTXOs in the inputs list, each utxo will be signed with each key in the list at the position of the utxo in the inputs list
+   */
+  signUpdateIdentityTransaction(
+    unsignedTxHex: string,
+    inputs: GetAddressUtxosResponse["result"],
+    keys: string[][]
+  ): string {    
+    const txb = smarttxs.getFundedTxBuilder(unsignedTxHex, networks.verus, inputs.map(x => Buffer.from(x.script, 'hex')));
+
+    for (let i = 0; i < keys.length; i++) {
+      if (inputs[i] && keys[i] && Array.isArray(keys[i]) && keys[i].length > 0) {
+        const keysForInput = keys[i];
+
+        for (let j = 0; j < keysForInput.length; j++) {
+          if (keysForInput[j]) {
+            const keyPair = ECPair.fromWIF(keysForInput[j], networks.verus);
+
+            txb.sign(i, keyPair, null, Transaction.SIGHASH_ALL, inputs[i].satoshis);
+          }
+        }
+      }
+    }
+
+    return txb.build().toHex();
   }
 }
 
