@@ -928,6 +928,35 @@ class VerusIdInterface {
     return { hex: completeIdentityUpdate, utxos: utxosUsed };
   }
 
+  async createRevokeIdentityTransaction(
+    _identity: Identity,
+    changeAddress: string,
+    utxoList: GetAddressUtxosResponse["result"],
+    chainIAddr?: string,
+    fee: number = 0.0001,
+    fundRawTransactionResult?: FundRawTransactionResponse["result"],
+    getIdentityResult?: GetIdentityResponse["result"],
+    identityTransactionResult?: GetRawTransactionResponse["result"],
+    currentHeight?: number
+  ): Promise<{hex: string, utxos: GetAddressUtxosResponse["result"]}> {
+    const identity = new Identity();
+    identity.fromBuffer(_identity.toBuffer());
+
+    identity.revoke();
+
+    return this.createUpdateIdentityTransaction(
+      identity,
+      changeAddress,
+      utxoList,
+      chainIAddr,
+      fee,
+      fundRawTransactionResult,
+      getIdentityResult,
+      identityTransactionResult,
+      currentHeight
+    );
+  }
+
   /**
    * 
    * @param unsignedTxHex The unsigned transaction hex

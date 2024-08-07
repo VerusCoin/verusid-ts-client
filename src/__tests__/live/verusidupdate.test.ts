@@ -41,9 +41,8 @@ describe('Creates VerusID update transactions', () => {
 
   test('can create and sign basic revoke identity tx', async () => {
     const identity = Identity.fromJson(TEST_ID_3_REVOKE.identity);
-    identity.revoke();
     
-    const res = await VerusId.createUpdateIdentityTransaction(
+    const res = await VerusId.createRevokeIdentityTransaction(
       identity,
       TEST_ID_3_REVOKE.identity.primaryaddresses[0],
       TEST_UTXOS_REVOKE_TEST_ID_3,
