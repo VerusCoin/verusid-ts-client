@@ -9,12 +9,12 @@ describe('Creates VerusID update transactions', () => {
     const res = await VerusId.createUpdateIdentityTransaction(
       Identity.fromJson(TEST_ID_2.identity),
       TEST_ID_2.identity.primaryaddresses[0],
+      TEST_ID_2_RAW_TX,
+      TEST_ID_2.blockheight,
       TEST_UTXOS,
       VERUSTEST_I_ADDR,
       0.0001,
       TEST_ID_2_FUNDED_UPDATE,
-      TEST_ID_2,
-      TEST_ID_2_RAW_TX,
       18167
     );
 
@@ -25,12 +25,12 @@ describe('Creates VerusID update transactions', () => {
     const res = await VerusId.createUpdateIdentityTransaction(
       Identity.fromJson(TEST_ID_3.identity),
       TEST_ID_3.identity.primaryaddresses[0],
+      TEST_ID_3_RAW_TX,
+      TEST_ID_3.blockheight,
       TEST_UTXOS_TEST_ID_3,
       VERUSTEST_I_ADDR,
       0.0001,
       TEST_ID_3_FUNDRAWTX_RES,
-      TEST_ID_3,
-      TEST_ID_3_RAW_TX,
       31677
     );
 
@@ -45,12 +45,12 @@ describe('Creates VerusID update transactions', () => {
     const res = await VerusId.createRevokeIdentityTransaction(
       identity,
       TEST_ID_3_REVOKE.identity.primaryaddresses[0],
+      TEST_ID_3_REVOKE_RAW_TX,
+      TEST_ID_3_REVOKE.blockheight,
       TEST_UTXOS_REVOKE_TEST_ID_3,
       VERUSTEST_I_ADDR,
       0.0001,
       TEST_ID_3_REVOKE_FUNDRAWTX_RES,
-      TEST_ID_3_REVOKE,
-      TEST_ID_3_REVOKE_RAW_TX,
       33084
     );
 

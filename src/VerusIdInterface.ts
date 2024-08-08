@@ -18,8 +18,11 @@ import {
   VerusPayInvoiceDetails,
   Identity,
   GetAddressUtxosResponse,
-  GetRawTransactionResponse,
   FundRawTransactionResponse,
+  decompile,
+  OptCCParams,
+  OPS,
+  EVALS,
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -32,6 +35,7 @@ import {
 } from "@bitgo/utxo-lib";
 import { BlockInfo } from "verus-typescript-primitives/dist/block/BlockInfo";
 import BigNumber from "bignumber.js"
+import { BN } from "bn.js";
 
 const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
@@ -778,15 +782,19 @@ class VerusIdInterface {
     return sig.verifyHashOffline(request.getChallengeHash(), address)[0];
   }
 
+  // When using this function with a remote RPC server, PLEASE USE THE VERUSID DECODED FROM rawIdentityTransaction
+  // AS YOUR BASE FOR PASSING IN THE IDENTITY PARAMETER (what you want to update). Otherwise if you're using an 
+  // untrusted server to get your identity base and then editing, you could be updating an ID with data you don't
+  // want to update.
   async createUpdateIdentityTransaction(
     identity: Identity,
     changeAddress: string,
+    rawIdentityTransaction: string,
+    identityTransactionHeight: number,
     utxoList: GetAddressUtxosResponse["result"],
     chainIAddr?: string,
     fee: number = 0.0001,
     fundRawTransactionResult?: FundRawTransactionResponse["result"],
-    getIdentityResult?: GetIdentityResponse["result"],
-    identityTransactionResult?: GetRawTransactionResponse["result"],
     currentHeight?: number
   ): Promise<{hex: string, utxos: GetAddressUtxosResponse["result"]}> {
     let height = currentHeight;
@@ -851,30 +859,34 @@ class VerusIdInterface {
         throw new Error("Incorrect fee.")
       }
     })
-
-    let idResponse: GetIdentityResponse["result"];
-
-    if (getIdentityResult == null) {
-      const _idres = await this.interface.getIdentity(identity.getIdentityAddress());
-      if (_idres.error) throw new Error(_idres.error.message);
-  
-      idResponse = _idres.result!;
-    } else idResponse = getIdentityResult;
     
-    const { txid, vout } = idResponse;
-
-    let rawTxResponse: GetRawTransactionResponse["result"];
-
-    if (identityTransactionResult == null) {
-      const rawtxres = await this.interface.getRawTransaction(txid);
-      if (rawtxres.error) throw new Error(rawtxres.error.message);
-
-      rawTxResponse = rawtxres.result!;
-    } else rawTxResponse = identityTransactionResult;
+    const identityTransaction = Transaction.fromHex(rawIdentityTransaction, networks.verus);
     
-    const identityTransaction = Transaction.fromHex(rawTxResponse, networks.verus);
+    let vout = -1;
 
-    if (typeof vout !== 'number' || vout > (identityTransaction.outs.length - 1) || vout < 0) {
+    for (let i = 0; i < identityTransaction.outs.length; i++) {
+      const decomp = decompile(identityTransaction.outs[i].script);
+
+      if (decomp.length !== 4) continue;
+      if (decomp[1] !== OPS.OP_CHECKCRYPTOCONDITION) continue;
+      if (decomp[3] !== OPS.OP_DROP) continue;
+
+      const outMaster = OptCCParams.fromChunk(decomp[0] as Buffer);
+      const outParams = OptCCParams.fromChunk(decomp[2] as Buffer);
+
+      if (!outMaster.eval_code.eq(new BN(EVALS.EVAL_NONE))) continue;
+      if (!outParams.eval_code.eq(new BN(EVALS.EVAL_IDENTITY_PRIMARY))) continue;
+
+      const __identity = new Identity();
+      __identity.fromBuffer(outParams.getParamObject()!)
+
+      if (__identity.getIdentityAddress() === identity.getIdentityAddress()) {
+        vout = i;
+        break;
+      }
+    }
+
+    if (vout < 0) {
       throw new Error("Identity output not found");
     }
 
@@ -900,6 +912,8 @@ class VerusIdInterface {
       } else throw new Error("Input not found in UTXO list");
     })
 
+    const txid = identityTransaction.getId();
+
     // Add ID defintion to identity update tx hex
     const completeIdentityUpdate: string = completeFundedIdentityUpdate(
       fundedTxHex,
@@ -915,12 +929,12 @@ class VerusIdInterface {
 
     // Add ID definition UTXO to utxosUsed
     utxosUsed.push({
-      address: idResponse.identity.identityaddress!,
+      address: identity.getIdentityAddress(),
       txid: txid,
       outputIndex: vout,
       script: identityTransaction.outs[vout].script.toString('hex'),
       satoshis: 0,
-      height: idResponse.blockheight,
+      height: identityTransactionHeight,
       isspendable: 0,
       blocktime: 0 // Filled in to avoid getblock call because blocktime is not currently checked for the ID definition utxo
     })
@@ -931,12 +945,12 @@ class VerusIdInterface {
   async createRevokeIdentityTransaction(
     _identity: Identity,
     changeAddress: string,
+    rawIdentityTransaction: string,
+    identityTransactionHeight: number,
     utxoList: GetAddressUtxosResponse["result"],
     chainIAddr?: string,
     fee: number = 0.0001,
     fundRawTransactionResult?: FundRawTransactionResponse["result"],
-    getIdentityResult?: GetIdentityResponse["result"],
-    identityTransactionResult?: GetRawTransactionResponse["result"],
     currentHeight?: number
   ): Promise<{hex: string, utxos: GetAddressUtxosResponse["result"]}> {
     const identity = new Identity();
@@ -947,12 +961,12 @@ class VerusIdInterface {
     return this.createUpdateIdentityTransaction(
       identity,
       changeAddress,
+      rawIdentityTransaction,
+      identityTransactionHeight,
       utxoList,
       chainIAddr,
       fee,
       fundRawTransactionResult,
-      getIdentityResult,
-      identityTransactionResult,
       currentHeight
     );
   }
