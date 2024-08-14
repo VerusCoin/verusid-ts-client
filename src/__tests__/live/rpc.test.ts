@@ -15,7 +15,7 @@ describe('Makes live API Verusd RPC calls', () => {
     )
 
     expect(sig).toBe(
-      "AgX3RgAAAUEgy1hI7t/VqBAbBJpM1iyKAo7xlIQ5KJv3sTxzcrbLfr52IAcu/s/nlDleYxa+WrUlJAA2Ek+1diYtJ8a4PAtFbw=="
+      "AgX3RgAAAUEgkH849JQVsiFEJeg33Zxdakm2Ty6aNthhq1aptFliLLtMJDV1AiQDEhiB0ikP4EJn7VzGI3ahPMs5DC2rJLfqaQ=="
     );
 
     const correctVerification = await VerusId.verifyMessage(
