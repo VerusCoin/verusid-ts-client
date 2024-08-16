@@ -45,7 +45,7 @@
     "lib/**/*"
   ],
   "dependencies": {
-    "@bitgo/utxo-lib": "https://github.com/VerusCoin/BitGoJS.git#ec65bc22093848378aafd024f41a4ac92f029552",
+    "@bitgo/utxo-lib": "https://github.com/VerusCoin/BitGoJS.git#c674cc555ec8bbb10c93e43b7c72ca267a22ffc3",
     "axios": "1.6.5",
     "bignumber.js": "9.1.0",
     "bn.js": "5.2.1",
