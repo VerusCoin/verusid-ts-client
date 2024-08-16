@@ -804,7 +804,7 @@ class VerusIdInterface {
       height = await this.getCurrentHeight();
     }
     
-    const unfundedTxHex = createUnfundedIdentityUpdate(identity, networks.verus, height + 20);
+    const unfundedTxHex = createUnfundedIdentityUpdate(identity.toBuffer().toString('hex'), networks.verus, height + 20);
 
     let fundedTxHex;
 
