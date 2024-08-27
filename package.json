@@ -44,8 +44,8 @@
     "lib/**/*"
   ],
   "dependencies": {
-    "@bitgo/utxo-lib": "https://github.com/VerusCoin/BitGoJS.git#c674cc555ec8bbb10c93e43b7c72ca267a22ffc3",
-    "axios": "1.6.5",
+    "@bitgo/utxo-lib": "https://github.com/VerusCoin/BitGoJS.git#610de57ed2d805a11d10de717e364e5e95c76ef9",
+    "axios": "1.7.4",
     "bignumber.js": "9.1.0",
     "verus-typescript-primitives": "https://github.com/VerusCoin/verus-typescript-primitives.git",
     "verusd-rpc-ts-client": "https://github.com/VerusCoin/verusd-rpc-ts-client.git"
