@@ -48,6 +48,10 @@ declare class VerusIdInterface {
         hex: string;
         utxos: GetAddressUtxosResponse["result"];
     }>;
+    createRecoverIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number): Promise<{
+        hex: string;
+        utxos: GetAddressUtxosResponse["result"];
+    }>;
     /**
      *
      * @param unsignedTxHex The unsigned transaction hex

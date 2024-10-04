@@ -803,6 +803,8 @@ class VerusIdInterface {
     if (height == null) {
       height = await this.getCurrentHeight();
     }
+
+    identity.upgradeVersion();
     
     const unfundedTxHex = createUnfundedIdentityUpdate(identity.toBuffer().toString('hex'), networks.verus, height + 20);
 
@@ -957,6 +959,35 @@ class VerusIdInterface {
     identity.fromBuffer(_identity.toBuffer());
 
     identity.revoke();
+
+    return this.createUpdateIdentityTransaction(
+      identity,
+      changeAddress,
+      rawIdentityTransaction,
+      identityTransactionHeight,
+      utxoList,
+      chainIAddr,
+      fee,
+      fundRawTransactionResult,
+      currentHeight
+    );
+  }
+
+  async createRecoverIdentityTransaction(
+    _identity: Identity,
+    changeAddress: string,
+    rawIdentityTransaction: string,
+    identityTransactionHeight: number,
+    utxoList: GetAddressUtxosResponse["result"],
+    chainIAddr?: string,
+    fee: number = 0.0001,
+    fundRawTransactionResult?: FundRawTransactionResponse["result"],
+    currentHeight?: number
+  ): Promise<{hex: string, utxos: GetAddressUtxosResponse["result"]}> {
+    const identity = new Identity();
+    identity.fromBuffer(_identity.toBuffer());
+
+    identity.unrevoke();
 
     return this.createUpdateIdentityTransaction(
       identity,
