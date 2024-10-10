@@ -958,6 +958,7 @@ class VerusIdInterface {
     const identity = new Identity();
     identity.fromBuffer(_identity.toBuffer());
 
+    identity.clearContentMultiMap();
     identity.revoke();
 
     return this.createUpdateIdentityTransaction(
@@ -987,6 +988,7 @@ class VerusIdInterface {
     const identity = new Identity();
     identity.fromBuffer(_identity.toBuffer());
 
+    identity.clearContentMultiMap();
     identity.unrevoke();
 
     return this.createUpdateIdentityTransaction(
