@@ -49,16 +49,10 @@
     "axios": "1.11.0",
     "bignumber.js": "9.1.0",
     "bn.js": "5.2.1",
-    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git",
-    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client.git"
+    "verus-typescript-primitives": "git+https://github.com/michaeltout/verus-typescript-primitives.git#identity-update-request",
+    "verusd-rpc-ts-client": "git+https://github.com/michaeltout/verusd-rpc-ts-client"
   },
   "resolutions": {
-    "brace-expansion": "1.1.12",
-    "cross-spawn": "7.0.5",
-    "word-wrap": "1.2.4",
-    "semver": "7.5.2",
-    "micromatch": "4.0.8",
-    "braces": "3.0.3",
-    "base-x": "3.0.11"
+    "axios": "1.11.0"
   }
 }
