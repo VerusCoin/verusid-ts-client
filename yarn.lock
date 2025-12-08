@@ -3825,9 +3825,9 @@ varuint-bitcoin@1.0.4:
     bs58check "2.0.0"
     create-hash "1.2.0"
 
-"verus-typescript-primitives@git+https://github.com/michaeltout/verus-typescript-primitives.git#identity-update-request":
+"verus-typescript-primitives@git+https://github.com/michaeltout/verus-typescript-primitives.git#generic-signed-request":
   version "1.0.0"
-  resolved "git+https://github.com/michaeltout/verus-typescript-primitives.git#98106abde48d107b0b3edeedb5cb3482236e1aab"
+  resolved "git+https://github.com/michaeltout/verus-typescript-primitives.git#d63d07e8eceaa404194c06e1ed81d96ab40176a0"
   dependencies:
     base64url "3.0.1"
     bech32 "2.0.0"
@@ -3836,12 +3836,12 @@ varuint-bitcoin@1.0.4:
     bs58check "2.0.0"
     create-hash "1.2.0"
 
-"verusd-rpc-ts-client@git+https://github.com/michaeltout/verusd-rpc-ts-client":
+"verusd-rpc-ts-client@git+https://github.com/michaeltout/verusd-rpc-ts-client#generic-request-changes":
   version "0.1.0"
-  resolved "git+https://github.com/michaeltout/verusd-rpc-ts-client#0d6c4380f2a614bd63ec7927d90c09fc17e2eade"
+  resolved "git+https://github.com/michaeltout/verusd-rpc-ts-client#d4ce3dffa78b06f8ce58a661eb10d0533936367f"
   dependencies:
     axios "1.7.4"
-    verus-typescript-primitives "git+https://github.com/VerusCoin/verus-typescript-primitives.git"
+    verus-typescript-primitives "git+https://github.com/michaeltout/verus-typescript-primitives.git#generic-signed-request"
 
 walker@^1.0.8:
   version "1.0.8"
