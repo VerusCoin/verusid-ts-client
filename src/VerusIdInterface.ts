@@ -23,13 +23,14 @@ import {
   OptCCParams,
   OPS,
   EVALS,
-  IdentityUpdateRequest,
   IdentityUpdateRequestDetails,
-  IdentityID,
-  IdentityUpdateResponse,
-  IdentityUpdateResponseDetails,
   VerusCLIVerusIDJson,
   PartialIdentity,
+  GenericRequest,
+  GenericRequestInterface,
+  GenericResponse,
+  GenericResponseInterface,
+  VERUSPAY_VERSION_3
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -43,6 +44,7 @@ import {
 import { BlockInfo } from "verus-typescript-primitives/dist/block/BlockInfo";
 import BigNumber from "bignumber.js"
 import { BN } from "bn.js";
+import { GenericEnvelope } from "verus-typescript-primitives/dist/vdxf/classes/envelope/GenericEnvelope";
 
 const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
@@ -309,6 +311,9 @@ class VerusIdInterface {
     };
   }
 
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async signLoginConsentRequest(
     request: LoginConsentRequest,
     primaryAddrWif: string,
@@ -338,38 +343,9 @@ class VerusIdInterface {
     return request;
   }
 
-  async signIdentityUpdateRequest(
-    request: IdentityUpdateRequest,
-    primaryAddrWif: string,
-    getIdentityResult?: GetIdentityResponse["result"],
-    currentHeight?: number
-  ): Promise<IdentityUpdateRequest> {
-    request.setSigned();
-
-    let height = currentHeight;
-
-    if (height == null) {
-      height = await this.getCurrentHeight();
-    }
-
-    const sig = await this.signHash(
-      request.signingid.toAddress()!,
-      request.getDetailsHash(height),
-      primaryAddrWif,
-      getIdentityResult,
-      height,
-      request.systemid.toAddress()!
-    );
-
-    request.signature = new VerusIDSignature(
-      { signature: sig },
-      IDENTITY_AUTH_SIG_VDXF_KEY,
-      false
-    );
-
-    return request;
-  }
-
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async createLoginConsentRequest(
     signingId: string,
     challenge: LoginConsentChallenge,
@@ -399,35 +375,9 @@ class VerusIdInterface {
     } else return req;
   }
 
-  async createIdentityUpdateRequest(
-    signingId: string,
-    details: IdentityUpdateRequestDetails,
-    primaryAddrWif?: string,
-    getIdentityResult?: GetIdentityResponse["result"],
-    currentHeight?: number,
-    chainIAddr?: string
-  ): Promise<IdentityUpdateRequest> {
-    let chainId: string;
-
-    if (chainIAddr != null) chainId = chainIAddr;
-    else chainId = await this.getChainId();
-
-    const req = new IdentityUpdateRequest({
-      systemid: IdentityID.fromAddress(chainId),
-      signingid: IdentityID.fromAddress(signingId),
-      details,
-    });
-
-    if (primaryAddrWif) {
-      return this.signIdentityUpdateRequest(
-        req,
-        primaryAddrWif,
-        getIdentityResult,
-        currentHeight
-      );
-    } else return req;
-  }
-
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async verifyLoginConsentRequest(
     request: LoginConsentRequest,
     getIdentityResult?: GetIdentityResponse["result"],
@@ -468,46 +418,9 @@ class VerusIdInterface {
     );
   }
 
-  async verifyIdentityUpdateRequest(
-    request: IdentityUpdateRequest,
-    getIdentityResult?: GetIdentityResponse["result"],
-    chainIAddr?: string,
-    sigBlockTime?: number
-  ): Promise<boolean> {
-    const sigInfo = await this.getSignatureInfo(
-      request.signingid.toAddress()!,
-      request.signature!.signature,
-      chainIAddr
-    );
-
-    let blocktime;
-
-    if (sigBlockTime) blocktime = sigBlockTime;
-    else {
-      const _blockres = await this.interface.getBlock(sigInfo.height.toString());
-      if (_blockres.error) throw new Error(_blockres.error.message);
-
-      blocktime = (_blockres.result as BlockInfo).time;
-    }
-
-    if (
-      BigNumber(blocktime)
-        .minus(request.details.createdat!.toString())
-        .abs()
-        .isGreaterThan(LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD)
-    ) {
-      return false
-    }
-
-    return this.verifyHash(
-      request.signingid.toAddress()!,
-      request.signature!.signature,
-      request.getDetailsHash(sigInfo.height),
-      getIdentityResult,
-      chainIAddr
-    );
-  }
-
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   private async signLoginResponse(
     response: LoginConsentResponse | LoginConsentProvisioningResponse,
     primaryAddrWif: string,
@@ -537,38 +450,9 @@ class VerusIdInterface {
     return response;
   }
 
-  async signIdentityUpdateResponse(
-    response: IdentityUpdateResponse,
-    primaryAddrWif: string,
-    getIdentityResult?: GetIdentityResponse["result"],
-    currentHeight?: number
-  ): Promise<IdentityUpdateResponse> {
-    response.setSigned();
-
-    let height = currentHeight;
-
-    if (height == null) {
-      height = await this.getCurrentHeight();
-    }
-
-    const sig = await this.signHash(
-      response.signingid.toAddress()!,
-      response.getDetailsHash(height),
-      primaryAddrWif,
-      getIdentityResult,
-      height,
-      response.systemid.toAddress()!
-    );
-
-    response.signature = new VerusIDSignature(
-      { signature: sig },
-      LOGIN_CONSENT_RESPONSE_SIG_VDXF_KEY,
-      false
-    );
-
-    return response;
-  }
-
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   private async createLoginResponse(
     signingId: string,
     decision: LoginConsentDecision | LoginConsentProvisioningDecision,
@@ -605,35 +489,9 @@ class VerusIdInterface {
     } else return req;
   }
 
-  async createIdentityUpdateResponse(
-    signingId: string,
-    details: IdentityUpdateResponseDetails,
-    primaryAddrWif?: string,
-    getIdentityResult?: GetIdentityResponse["result"],
-    currentHeight?: number,
-    chainIAddr?: string
-  ): Promise<IdentityUpdateResponse> {
-    let chainId: string;
-
-    if (chainIAddr != null) chainId = chainIAddr;
-    else chainId = await this.getChainId();
-
-    const req = new IdentityUpdateResponse({
-      signingid: IdentityID.fromAddress(signingId),
-      systemid: IdentityID.fromAddress(chainId),
-      details
-    })
-
-    if (primaryAddrWif) {
-      return this.signIdentityUpdateResponse(
-        req,
-        primaryAddrWif,
-        getIdentityResult,
-        currentHeight
-      );
-    } else return req;
-  }
-
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   private async verifyResponse(
     response: LoginConsentResponse | LoginConsentProvisioningResponse,
     getIdentityResult?: GetIdentityResponse["result"],
@@ -654,46 +512,9 @@ class VerusIdInterface {
     );
   }
 
-  async verifyIdentityUpdateResponse(
-    response: IdentityUpdateResponse,
-    getIdentityResult?: GetIdentityResponse["result"],
-    chainIAddr?: string,
-    sigBlockTime?: number
-  ): Promise<boolean> {
-    const sigInfo = await this.getSignatureInfo(
-      response.signingid.toAddress()!,
-      response.signature!.signature,
-      chainIAddr
-    );
-
-    let blocktime;
-
-    if (sigBlockTime) blocktime = sigBlockTime;
-    else {
-      const _blockres = await this.interface.getBlock(sigInfo.height.toString());
-      if (_blockres.error) throw new Error(_blockres.error.message);
-
-      blocktime = (_blockres.result as BlockInfo).time;
-    }
-
-    if (
-      BigNumber(blocktime)
-        .minus(response.details.createdat!.toString())
-        .abs()
-        .isGreaterThan(LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD)
-    ) {
-      return false
-    }
-
-    return this.verifyHash(
-      response.signingid.toAddress()!,
-      response.signature!.signature,
-      response.getDetailsHash(sigInfo.height),
-      getIdentityResult,
-      chainIAddr
-    );
-  }
-
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async verifySignedSessionObject(
     object: SignedSessionObject,
     getIdentityResult?: GetIdentityResponse["result"],
@@ -714,6 +535,9 @@ class VerusIdInterface {
     );
   }
 
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async signSessionObject(
     object: SignedSessionObject,
     primaryAddrWif: string,
@@ -743,6 +567,9 @@ class VerusIdInterface {
     return object;
   }
 
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async createSignedSessionObject(
     signingId: string,
     data: SignedSessionObjectData,
@@ -772,6 +599,9 @@ class VerusIdInterface {
     } else return object;
   }
 
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async signLoginConsentResponse(
     response: LoginConsentResponse,
     primaryAddrWif: string,
@@ -786,6 +616,9 @@ class VerusIdInterface {
     );
   }
 
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async createLoginConsentResponse(
     signingId: string,
     decision: LoginConsentDecision,
@@ -804,6 +637,9 @@ class VerusIdInterface {
     );
   }
 
+  /**
+   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   */
   async verifyLoginConsentResponse(
     response: LoginConsentResponse,
     getIdentityResult?: GetIdentityResponse["result"],
@@ -812,6 +648,9 @@ class VerusIdInterface {
     return this.verifyResponse(response, getIdentityResult, chainIAddr);
   }
 
+  /**
+   * @deprecated Legacy VerusPay implementation, use GenericRequest class with invoice objects in details array
+   */
   async createVerusPayInvoice(
     details: VerusPayInvoiceDetails,
     signingIdIAddr?: string,
@@ -826,7 +665,8 @@ class VerusIdInterface {
     else chainId = await this.getChainId();
 
     const inv = new VerusPayInvoice({
-      details: details
+      details: details,
+      version: VERUSPAY_VERSION_3
     });
 
     if (signingIdIAddr && primaryAddrWif) {
@@ -841,6 +681,9 @@ class VerusIdInterface {
     } else return inv;
   }
 
+  /**
+   * @deprecated Legacy VerusPay implementation, use GenericRequest class with invoice objects in details array
+   */
   async signVerusPayInvoice(
     invoice: VerusPayInvoice,
     signingIdIAddr: string,
@@ -877,6 +720,9 @@ class VerusIdInterface {
     return invoice;
   }
 
+  /**
+   * @deprecated Legacy VerusPay implementation, use GenericRequest class with invoice objects in details array
+   */
   async verifySignedVerusPayInvoice(
     invoice: VerusPayInvoice,
     getIdentityResult?: GetIdentityResponse["result"],
@@ -1149,7 +995,7 @@ class VerusIdInterface {
       // Ignore cmm fields that contained the "data" field because we can't establish if the cmm and/or encryption was 
       // done correctly yet
       if (identity.containsSignData()) {
-        const signDataKeys = identity.signdatamap!.keys();
+        const signDataKeys = identity.signDataMap!.keys();
 
         if (serverKeysChangedCompJson.contentmultimap) {
           for (const key of signDataKeys) {
@@ -1384,6 +1230,137 @@ class VerusIdInterface {
 
     return txb.build().toHex();
   }
+
+  private async createGenericEnvelope<T extends GenericEnvelope, I>(
+    EnvelopeClass: new (params: (I)) => T,
+    params: I,
+    primaryAddrWif?: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number,
+    chainIAddr?: string
+  ): Promise<T> {
+    let chainId: string;
+
+    if (chainIAddr != null) chainId = chainIAddr;
+    else chainId = await this.getChainId();
+
+    const req = new EnvelopeClass(params)
+
+    if (primaryAddrWif) {
+      return this.signGenericEnvelope<T>(
+        req,
+        primaryAddrWif,
+        getIdentityResult,
+        currentHeight
+      );
+    } else return req;
+  }
+
+  private async signGenericEnvelope<T extends GenericEnvelope>(
+    request: T,
+    primaryAddrWif: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number
+  ): Promise<T> {
+    request.setSigned();
+
+    let height = currentHeight;
+
+    if (height == null) {
+      height = await this.getCurrentHeight();
+    }
+
+    if (request.signature == null) {
+      throw new Error("Require VerifiableSignatureData to be filled in, without signatureAsVch to sign.");
+    }
+
+    if (request.signature?.hasBoundHashes() || request.signature?.hasStatements() || request.signature?.hasVdxfKeys() || request.signature?.hasVdxfKeyNames()) {
+      throw new Error("Bound hashes, statements, and vdxfkeys in signature not yet supported.");
+    }
+
+    const sig = await this.signHash(
+      request.signature?.identityID.toIAddress()!,
+      request.getDetailsIdentitySignatureHash(height),
+      primaryAddrWif,
+      getIdentityResult,
+      height,
+      request.signature?.systemID.toIAddress()!,
+    );
+
+    request.signature.signatureAsVch = Buffer.from(sig, 'base64')
+
+    return request;
+  }
+
+  private async verifyGenericEnvelope<T extends GenericEnvelope>(
+    envelope: T,
+    getIdentityResult?: GetIdentityResponse["result"],
+    chainIAddr?: string,
+    sigBlockTime?: number
+  ): Promise<boolean> {
+    if (!envelope.isSigned()) return false;
+
+    const verifiableSig = envelope.signature!;
+
+    const sigInfo = await this.getSignatureInfo(
+      verifiableSig.identityID.toIAddress()!,
+      verifiableSig.signatureAsVch!.toString('base64'),
+      chainIAddr
+    );
+
+    if (envelope.hasCreatedAt()) {
+      let blocktime;
+
+      if (sigBlockTime) blocktime = sigBlockTime;
+      else {
+        const _blockres = await this.interface.getBlock(sigInfo.height.toString());
+        if (_blockres.error) throw new Error(_blockres.error.message);
+
+        blocktime = (_blockres.result as BlockInfo).time;
+      }
+
+      if (
+        BigNumber(blocktime)
+          .minus(envelope.createdAt?.toString()!)
+          .abs()
+          .isGreaterThan(LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD)
+      ) {
+        return false
+      }
+    } else {
+      return false
+    }
+    
+    return this.verifyHash(
+      verifiableSig.identityID.toIAddress(),
+      verifiableSig.signatureAsVch.toString('base64'),
+      envelope.getDetailsIdentitySignatureHash(sigInfo.height),
+      getIdentityResult,
+      chainIAddr
+    );
+  }
+
+  createGenericRequest = (
+    params: GenericRequestInterface,
+    primaryAddrWif?: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number,
+    chainIAddr?: string
+  ) => this.createGenericEnvelope<GenericRequest, GenericRequestInterface>(GenericRequest, params, primaryAddrWif, getIdentityResult, currentHeight, chainIAddr);
+
+  createGenericResponse = (
+    params: GenericResponseInterface,
+    primaryAddrWif?: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number,
+    chainIAddr?: string
+  ) => this.createGenericEnvelope<GenericResponse, GenericResponseInterface>(GenericResponse, params, primaryAddrWif, getIdentityResult, currentHeight, chainIAddr);
+
+  signGenericRequest = this.signGenericEnvelope<GenericRequest>;
+  signGenericResponse = this.signGenericEnvelope<GenericResponse>;
+
+  verifyGenericRequest = this.verifyGenericEnvelope<GenericRequest>;
+  verifyGenericResponse = this.verifyGenericEnvelope<GenericResponse>;
 }
 
 export default VerusIdInterface

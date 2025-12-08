@@ -129,7 +129,6 @@ describe('Creates VerusID update transactions', () => {
   test('can create and sign update identity with cmm update including signdata', async () => {
     const details = {
       requestid: new BN("123456", 10).toString(),
-      createdat: new BN("1700000000", 10).toString(),
       expiryheight: new BN("1700000000", 10).toString()
     }
     
@@ -163,7 +162,6 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_5_REQUEST_JSON_DIFF_KEY,
       {
         requestid: new BN("123456", 10).toString(),
-        createdat: new BN("1700000000", 10).toString(),
         expiryheight: new BN("1700000000", 10).toString()
       }
     );
@@ -197,7 +195,6 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS,
       {
         requestid: new BN("123456", 10).toString(),
-        createdat: new BN("1700000000", 10).toString(),
         expiryheight: new BN("1700000000", 10).toString()
       }
     );
@@ -231,7 +228,6 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_5_REQUEST_JSON_DIFF_CMM,
       {
         requestid: new BN("123456", 10).toString(),
-        createdat: new BN("1700000000", 10).toString(),
         expiryheight: new BN("1700000000", 10).toString()
       }
     );

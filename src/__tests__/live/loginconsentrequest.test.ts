@@ -7,7 +7,7 @@ import {
 import { LoginConsentProvisioningChallenge, LoginConsentProvisioningResponse, LoginConsentProvisioningResult, LoginConsentResponse, LOGIN_CONSENT_PROVISIONING_ERROR_KEY_CREATION_FAILED, LOGIN_CONSENT_PROVISIONING_RESULT_STATE_FAILED } from 'verus-typescript-primitives';
 
 describe('Creates and validates login consent requests', () => {
-  const VerusId = new VerusIdInterface("VRSCTEST", "https://api.verus.services")
+  const VerusId = new VerusIdInterface("VRSCTEST", "127.0.0.1")
 
   test('can sign and verify basic login consent request', async () => {
     const req = await VerusId.createLoginConsentRequest(
@@ -47,7 +47,8 @@ describe('Creates and validates login consent requests', () => {
     expect(await VerusId.verifyLoginConsentRequest(
       primitives.LoginConsentRequest.fromWalletDeeplinkUri(req.toWalletDeeplinkUri()),
       TEST_ID,
-      VERUSTEST_I_ADDR
+      VERUSTEST_I_ADDR,
+      1527992841
     )).toBe(true)
 
     const _res = new LoginConsentResponse()
