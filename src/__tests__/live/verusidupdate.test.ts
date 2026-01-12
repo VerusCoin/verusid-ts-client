@@ -137,8 +137,6 @@ describe('Creates VerusID update transactions', () => {
       details
     );
 
-    reqDet.toggleIsTestnet();
-
     const res = await VerusId.createUpdateIdentityTransaction(
       reqDet,
       TEST_ID_5.identity.primaryaddresses[0],
@@ -149,7 +147,9 @@ describe('Creates VerusID update transactions', () => {
       0.0001,
       TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
       18167,
-      TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX
+      TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+      true,
+      true
     );
 
     const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, res.utxos, [[TEST_ID_5_SIGNER_WIF], [TEST_ID_5_SIGNER_WIF]]);
@@ -166,8 +166,6 @@ describe('Creates VerusID update transactions', () => {
       }
     );
 
-    reqDet.toggleIsTestnet();
-
     let error;
 
     try {
@@ -181,7 +179,9 @@ describe('Creates VerusID update transactions', () => {
         0.0001,
         TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
         18167,
-        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX
+        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        true,
+        true
       )
     } catch(e) {
       error = e;
@@ -199,8 +199,6 @@ describe('Creates VerusID update transactions', () => {
       }
     );
 
-    reqDet.toggleIsTestnet();
-
     let error;
 
     try {
@@ -214,7 +212,9 @@ describe('Creates VerusID update transactions', () => {
         0.0001,
         TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
         18167,
-        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX
+        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        true,
+        true
       )
     } catch(e) {
       error = e;
@@ -232,8 +232,6 @@ describe('Creates VerusID update transactions', () => {
       }
     );
 
-    reqDet.toggleIsTestnet();
-
     let error;
 
     try {
@@ -247,7 +245,9 @@ describe('Creates VerusID update transactions', () => {
         0.0001,
         TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
         18167,
-        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX
+        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        true,
+        true
       )
     } catch(e) {
       error = e;

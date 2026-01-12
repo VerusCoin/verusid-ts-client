@@ -852,7 +852,8 @@ class VerusIdInterface {
     fundRawTransactionResult?: FundRawTransactionResponse["result"],
     currentHeight?: number,
     updateIdentityTransactionHex?: string,
-    parseVdxfObjects: boolean = true
+    parseVdxfObjects: boolean = true,
+    isTestnet = false // This parameter is only necessary if you pass in an IdentityUpdateRequestDetails
   ): Promise<{ hex: string; utxos: GetAddressUtxosResponse["result"]; identity: Identity; deltas: Map<string, BigNumber>; }> {
     let height = currentHeight;
     let chainId: string;
@@ -952,7 +953,7 @@ class VerusIdInterface {
 
       unfundedTxHex = unfundedTx.toHex();
       
-      identityAddress = identity.getIdentityAddress();
+      identityAddress = identity.getIdentityAddress(isTestnet);
       
       const detailsFromRawTransaction = getIdentityFromIdTx(identityTransaction, identityAddress);
       vout = detailsFromRawTransaction.vout;
