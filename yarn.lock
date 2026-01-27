@@ -338,9 +338,9 @@
     "@bitgo/blake2b-wasm" "^3.0.1"
     nanoassert "^2.0.0"
 
-"@bitgo/utxo-lib@git+https://github.com/VerusCoin/BitGoJS.git#utxo-lib-verus":
+"@bitgo/utxo-lib@git+https://github.com/michaeltout/BitGoJS.git#utxo-lib-verus":
   version "1.9.6"
-  resolved "git+https://github.com/VerusCoin/BitGoJS.git#37a0da395919024f69add13418d9b99af019e4ce"
+  resolved "git+https://github.com/michaeltout/BitGoJS.git#8110ac7845ed806187890695301b6f3c61875b50"
   dependencies:
     "@bitgo/blake2b" "3.0.1"
     "@noble/curves" "1.9.7"
@@ -1359,7 +1359,12 @@ bip66@1.1.0:
   resolved "https://registry.yarnpkg.com/bip66/-/bip66-1.1.0.tgz#c5551d49d1696d78211be047e997fe7aac8820c5"
   integrity sha512-dBoAPJYg6HaaQeJGr4cNiqat1meGzlrv2qX+EJcW5q0zEdryMSLKlQKdTaCtDnrzEUPkwmlYqsD7ANaye4BEfg==
 
-bitcoin-ops@^1.3.0, "bitcoin-ops@git+https://github.com/VerusCoin/bitcoin-ops":
+bitcoin-ops@^1.3.0:
+  version "1.4.1"
+  resolved "https://registry.yarnpkg.com/bitcoin-ops/-/bitcoin-ops-1.4.1.tgz#e45de620398e22fd4ca6023de43974ff42240278"
+  integrity sha512-pef6gxZFztEhaE9RY9HmWVmiIHqCb2OyS4HPKkpc6CIiiOa3Qmuoylxc5P2EkU3w+5eTSifI9SEZC88idAIGow==
+
+"bitcoin-ops@git+https://github.com/VerusCoin/bitcoin-ops":
   version "1.4.1"
   resolved "git+https://github.com/VerusCoin/bitcoin-ops#a5f8f56e658301bc39881d41740b3a0010530efd"
 
@@ -1555,12 +1560,13 @@ cipher-base@^1.0.1:
     safe-buffer "^5.0.1"
 
 cipher-base@^1.0.3:
-  version "1.0.6"
-  resolved "https://registry.yarnpkg.com/cipher-base/-/cipher-base-1.0.6.tgz#8fe672437d01cd6c4561af5334e0cc50ff1955f7"
-  integrity sha512-3Ek9H3X6pj5TgenXYtNWdaBon1tgYCaebd+XPg0keyjEbEfkD4KkmAxkQ/i1vYvxdcT5nscLBfq9VJRmCBcFSw==
+  version "1.0.7"
+  resolved "https://registry.yarnpkg.com/cipher-base/-/cipher-base-1.0.7.tgz#bd094bfef42634ccfd9e13b9fc73274997111e39"
+  integrity sha512-Mz9QMT5fJe7bKI7MH31UilT5cEK5EHHRCccw/YRFsRY47AuNgaV6HY3rscp0/I4Q+tTW/5zoqpSeRRI54TkDWA==
   dependencies:
     inherits "^2.0.4"
     safe-buffer "^5.2.1"
+    to-buffer "^1.2.2"
 
 cjs-module-lexer@^2.1.0:
   version "2.1.0"
@@ -3642,10 +3648,10 @@ tmpl@1.0.5:
   resolved "https://registry.yarnpkg.com/tmpl/-/tmpl-1.0.5.tgz#8683e0b902bb9c20c4f726e3c0b69f36518c07cc"
   integrity sha512-3f0uOEAQwIqGuWW2MVzYg8fV/QNnc/IpuJNG837rLuczAaLVHslWHZQj4IGiEl5Hs3kkbhwL9Ab7Hrsmuj+Smw==
 
-to-buffer@^1.2.0, to-buffer@^1.2.1:
-  version "1.2.1"
-  resolved "https://registry.yarnpkg.com/to-buffer/-/to-buffer-1.2.1.tgz#2ce650cdb262e9112a18e65dc29dcb513c8155e0"
-  integrity sha512-tB82LpAIWjhLYbqjx3X4zEeHN6M8CiuOEy2JY8SEQVdYRe3CCHOFaqrBW1doLDrfpWhplcW7BL+bO3/6S3pcDQ==
+to-buffer@^1.2.0, to-buffer@^1.2.1, to-buffer@^1.2.2:
+  version "1.2.2"
+  resolved "https://registry.yarnpkg.com/to-buffer/-/to-buffer-1.2.2.tgz#ffe59ef7522ada0a2d1cb5dfe03bb8abc3cdc133"
+  integrity sha512-db0E3UJjcFhpDhAF4tLo03oli3pwl3dbnzXOUIlRKrp+ldk/VUxzpWYZENsw2SZiuBjHAk7DfB0VU7NKdpb6sw==
   dependencies:
     isarray "^2.0.5"
     safe-buffer "^5.2.1"
@@ -3816,7 +3822,7 @@ varuint-bitcoin@1.0.4:
 
 "verus-typescript-primitives@git+https://github.com/VerusCoin/verus-typescript-primitives.git":
   version "1.0.0"
-  resolved "git+https://github.com/VerusCoin/verus-typescript-primitives.git#b96b28011595273b18c4aaee97a6b3e3cc0d0850"
+  resolved "git+https://github.com/VerusCoin/verus-typescript-primitives.git#57cd0397da48d7dc8c297d9720766591a11bb89d"
   dependencies:
     base64url "3.0.1"
     bech32 "2.0.0"
@@ -3851,9 +3857,9 @@ walker@^1.0.8:
     makeerror "1.0.12"
 
 which-typed-array@^1.1.16:
-  version "1.1.19"
-  resolved "https://registry.yarnpkg.com/which-typed-array/-/which-typed-array-1.1.19.tgz#df03842e870b6b88e117524a4b364b6fc689f956"
-  integrity sha512-rEvr90Bck4WZt9HHFC4DJMsjvu7x+r6bImz0/BrbWb7A2djJ8hnZMrWnHo9F8ssv0OMErasDhftrfROTyqSDrw==
+  version "1.1.20"
+  resolved "https://registry.yarnpkg.com/which-typed-array/-/which-typed-array-1.1.20.tgz#3fdb7adfafe0ea69157b1509f3a1cd892bd1d122"
+  integrity sha512-LYfpUkmqwl0h9A2HL09Mms427Q1RZWuOHsukfVcKRq9q95iQxdw0ix1JQrqbcDR9PH1QDwf5Qo8OZb5lksZ8Xg==
   dependencies:
     available-typed-arrays "^1.0.7"
     call-bind "^1.0.8"
