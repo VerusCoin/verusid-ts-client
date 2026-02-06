@@ -1,9 +1,9 @@
 import { VerusIdInterface, primitives } from '../../index'
 import { TEST_ID, VERUSTEST_I_ADDR } from '../fixtures/verusid';
-import { TransferDestination, DEST_PKH, fromBase58Check } from 'verus-typescript-primitives';
+import { TransferDestination, DEST_PKH, fromBase58Check, VERUSPAY_VERSION_3 } from 'verus-typescript-primitives';
 
 describe('Creates and validates VerusPay v3+ invoices', () => {
-  const VerusId = new VerusIdInterface("VRSCTEST", "https://api.verus.services")
+  const VerusId = new VerusIdInterface("VRSCTEST", "127.0.0.1")
 
   test('can create basic VerusPay v3 invoice', async () => {
     const req = await VerusId.createVerusPayInvoice(
