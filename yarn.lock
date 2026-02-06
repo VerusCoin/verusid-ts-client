@@ -1359,12 +1359,7 @@ bip66@1.1.0:
   resolved "https://registry.yarnpkg.com/bip66/-/bip66-1.1.0.tgz#c5551d49d1696d78211be047e997fe7aac8820c5"
   integrity sha512-dBoAPJYg6HaaQeJGr4cNiqat1meGzlrv2qX+EJcW5q0zEdryMSLKlQKdTaCtDnrzEUPkwmlYqsD7ANaye4BEfg==
 
-bitcoin-ops@^1.3.0:
-  version "1.4.1"
-  resolved "https://registry.yarnpkg.com/bitcoin-ops/-/bitcoin-ops-1.4.1.tgz#e45de620398e22fd4ca6023de43974ff42240278"
-  integrity sha512-pef6gxZFztEhaE9RY9HmWVmiIHqCb2OyS4HPKkpc6CIiiOa3Qmuoylxc5P2EkU3w+5eTSifI9SEZC88idAIGow==
-
-"bitcoin-ops@git+https://github.com/VerusCoin/bitcoin-ops":
+bitcoin-ops@^1.3.0, "bitcoin-ops@git+https://github.com/VerusCoin/bitcoin-ops":
   version "1.4.1"
   resolved "git+https://github.com/VerusCoin/bitcoin-ops#a5f8f56e658301bc39881d41740b3a0010530efd"
 
@@ -3833,7 +3828,7 @@ varuint-bitcoin@1.0.4:
 
 "verusd-rpc-ts-client@git+https://github.com/VerusCoin/verusd-rpc-ts-client":
   version "0.1.0"
-  resolved "git+https://github.com/VerusCoin/verusd-rpc-ts-client#6eb88c220b25f2b9f6acf38cf50f8083dd875605"
+  resolved "git+https://github.com/VerusCoin/verusd-rpc-ts-client#ba996adad12b4059a6f9b36ec678f4359a3a578a"
   dependencies:
     axios "1.11.0"
     verus-typescript-primitives "git+https://github.com/VerusCoin/verus-typescript-primitives.git"
