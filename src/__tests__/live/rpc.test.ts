@@ -2,7 +2,7 @@ import { VerusIdInterface } from '../../index'
 import { TEST_ID, VERUSTEST_I_ADDR } from '../fixtures/verusid';
 
 describe('Makes live API Verusd RPC calls', () => {
-  const VerusId = new VerusIdInterface("VRSCTEST", "https://api.verus.services")
+  const VerusId = new VerusIdInterface("VRSCTEST", "127.0.0.1")
 
   test('can sign and verify basic message', async () => {
     const sig = await VerusId.signMessage(

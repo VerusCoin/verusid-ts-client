@@ -13,7 +13,7 @@ import { TEST_CREATED_AT, TEST_SALT, TEST_SAPLING_ADDR, TEST_UNSIGNED_VERIFIABLE
 import { TEST_ID_UPDATE_REQUEST_DETAILS, TEST_ID_UPDATE_RESPONSE_DETAILS } from '../fixtures/identityupdate';
 
 describe('Creates and identity update requests', () => {
-  const VerusId = new VerusIdInterface("VRSCTEST", "https://api.verus.services");
+  const VerusId = new VerusIdInterface("VRSCTEST", "127.0.0.1");
 
   async function testGenericRequest(details: Array<OrdinalVDXFObject>) {
     const req = await VerusId.createGenericRequest(
