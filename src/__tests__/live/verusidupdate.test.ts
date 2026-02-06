@@ -2,6 +2,7 @@ import { Identity, IdentityUpdateRequestDetails } from 'verus-typescript-primiti
 import { VerusIdInterface } from '../../index'
 import { TEST_UTXOS, TEST_ID_2, TEST_ID_2_RAW_TX, VERUSTEST_I_ADDR, TEST_ID_2_FUNDED_UPDATE, TEST_ID_2_UPDATE_NO_CHANGE, TEST_ID_3, TEST_UTXOS_TEST_ID_3, TEST_ID_3_FUNDRAWTX_RES, TEST_ID_3_RAW_TX, TEST_ID_3_RECOVERY_REVOKE_WIF, TEST_ID_3_SIGNED_TX, TEST_UTXOS_REVOKE_TEST_ID_3, TEST_ID_3_REVOKE_FUNDRAWTX_RES, TEST_ID_3_REVOKE, TEST_ID_3_REVOKE_RAW_TX, TEST_ID_3_REVOKE_SIGNED_TX, TEST_ID_3_RECOVER, TEST_ID_3_RECOVER_RAW_TX, TEST_UTXOS_RECOVER_TEST_ID_3, TEST_ID_3_RECOVER_FUNDRAWTX_RES, TEST_ID_3_RECOVER_SIGNED_TX, TEST_ID_4_RECOVER, TEST_ID_4_RECOVER_RAW_TX, TEST_UTXOS_RECOVER_TEST_ID_4, TEST_ID_4_RECOVERY_REVOKE_WIF, TEST_ID_4_RECOVER_FUNDRAWTX_RES, TEST_ID_4_RECOVER_SIGNED_TX, TEST_ID_4_RECOVERY_CHANGE_WIF, TEST_ID_5, TEST_ID_5_RAW_TRANSACTION, TEST_ID_5_UTXOS, TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX, TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX, TEST_ID_5_SIGNER_WIF, TEST_ID_5_SIGNED_TX, TEST_ID_5_REQUEST_JSON, TEST_ID_5_REQUEST_JSON_DIFF_KEY, TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS, TEST_ID_5_REQUEST_JSON_DIFF_CMM, TEST_ID_3_UNFUNDED_HEX } from '../fixtures/verusid';
 import { BN } from 'bn.js';
+import { TEST_REQUEST_ID } from '../fixtures/genericenvelope';
 
 describe('Creates VerusID update transactions', () => {
   const VerusId = new VerusIdInterface(VERUSTEST_I_ADDR, "http://localhost")
@@ -128,7 +129,7 @@ describe('Creates VerusID update transactions', () => {
 
   test('can create and sign update identity with cmm update including signdata', async () => {
     const details = {
-      requestid: new BN("123456", 10).toString(),
+      requestid: TEST_REQUEST_ID.toJson(),
       expiryheight: new BN("1700000000", 10).toString()
     }
     
@@ -161,7 +162,7 @@ describe('Creates VerusID update transactions', () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
       TEST_ID_5_REQUEST_JSON_DIFF_KEY,
       {
-        requestid: new BN("123456", 10).toString(),
+        requestid: TEST_REQUEST_ID.toJson(),
         expiryheight: new BN("1700000000", 10).toString()
       }
     );
@@ -194,7 +195,7 @@ describe('Creates VerusID update transactions', () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
       TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS,
       {
-        requestid: new BN("123456", 10).toString(),
+        requestid: TEST_REQUEST_ID.toJson(),
         expiryheight: new BN("1700000000", 10).toString()
       }
     );
@@ -227,7 +228,7 @@ describe('Creates VerusID update transactions', () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
       TEST_ID_5_REQUEST_JSON_DIFF_CMM,
       {
-        requestid: new BN("123456", 10).toString(),
+        requestid: TEST_REQUEST_ID.toJson(),
         expiryheight: new BN("1700000000", 10).toString()
       }
     );
