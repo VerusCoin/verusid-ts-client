@@ -45,12 +45,12 @@
     "lib/**/*"
   ],
   "dependencies": {
-    "@bitgo/utxo-lib": "git+https://github.com/michaeltout/BitGoJS.git#utxo-lib-verus",
+    "@bitgo/utxo-lib": "git+https://github.com/VerusCoin/BitGoJS.git#utxo-lib-verus",
     "axios": "1.11.0",
     "bignumber.js": "9.1.0",
     "bn.js": "5.2.1",
-    "verus-typescript-primitives": "git+https://github.com/michaeltout/verus-typescript-primitives.git#generic-signed-request",
-    "verusd-rpc-ts-client": "git+https://github.com/michaeltout/verusd-rpc-ts-client#generic-request-changes"
+    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git",
+    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client"
   },
   "resolutions": {
     "axios": "1.11.0"
