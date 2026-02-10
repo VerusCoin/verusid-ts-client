@@ -938,7 +938,7 @@ class VerusIdInterface {
       // If identity is an identityupdaterequest, that only contains a partial identity with the changes the user wants to make, so we 
       // need to fill in the rest of the ID in a way that doesn't trust the server without verification
 
-      if (identity.txid && identity.txid !== identityTransaction.getId()) {
+      if (identity.containsTxid() && identity.getTxidString() !== identityTransaction.getId()) {
         throw new Error("Identity update request txid does not match the txid of the identity transaction")
       };
 

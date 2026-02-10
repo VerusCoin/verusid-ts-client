@@ -191,6 +191,41 @@ describe('Creates VerusID update transactions', () => {
     expect(error).toBeDefined();
   });
 
+  test('catches update identity request txid mismatch', async () => {
+    const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
+      TEST_ID_5_REQUEST_JSON,
+      {
+        requestid: TEST_REQUEST_ID.toJson(),
+        expiryheight: new BN("1700000000", 10).toString()
+      }
+    );
+    reqDet.setTxidFromString("00".repeat(32));
+
+    let error;
+
+    try {
+      await VerusId.createUpdateIdentityTransaction(
+        reqDet,
+        TEST_ID_5.identity.primaryaddresses[0],
+        TEST_ID_5_RAW_TRANSACTION,
+        TEST_ID_5.blockheight,
+        TEST_ID_5_UTXOS,
+        VERUSTEST_I_ADDR,
+        0.0001,
+        TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
+        18167,
+        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        true,
+        true
+      )
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).toBeDefined();
+    expect((error as Error).message).toBe("Identity update request txid does not match the txid of the identity transaction");
+  });
+
   test('catches update identity where fundrawtx modifies data not intended to be modified', async () => {    
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
       TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS,
