@@ -852,7 +852,7 @@ class VerusIdInterface {
     identityTransactionHeight: number,
     utxoList?: GetAddressUtxosResponse["result"],
     chainIAddr?: string,
-    fee: number = 0.0001,
+    maxFee: number = 5,
     fundRawTransactionResult?: FundRawTransactionResponse["result"],
     currentHeight?: number,
     updateIdentityTransactionHex?: string,
@@ -1049,8 +1049,7 @@ class VerusIdInterface {
             txid: utxo.txid,
           };
         }),
-        changeAddress,
-        fee
+        changeAddress
       );
 
       if (_fundRawTxRes.error) throw new Error("Couldn't fund raw transaction")
@@ -1086,10 +1085,10 @@ class VerusIdInterface {
         }
       };
   
-      const feeSatoshis = BigNumber(fee).multipliedBy(BigNumber(10).pow(BigNumber(8)));
+      const feeSatoshis = BigNumber(maxFee).multipliedBy(BigNumber(10).pow(BigNumber(8)));
       deltas.forEach((value, key) => {
         if ((key !== chainId || value.isGreaterThan(0)) || (key === chainId && value.multipliedBy(-1).isGreaterThan(feeSatoshis))) {
-          throw new Error("Incorrect fee.")
+          throw new Error("Fee exceeds maximum permissable fee value.")
         }
       })
 
