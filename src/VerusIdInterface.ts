@@ -30,7 +30,11 @@ import {
   GenericRequestInterface,
   GenericResponse,
   GenericResponseInterface,
-  VERUSPAY_VERSION_3
+  VERUSPAY_VERSION_3,
+  OrdinalVDXFObject,
+  AuthenticationRequestOrdinalVDXFObject,
+  IdentityUpdateRequestOrdinalVDXFObject,
+  VerusPayInvoiceDetailsOrdinalVDXFObject
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -1341,6 +1345,32 @@ class VerusIdInterface {
     );
   }
 
+  private isValidGenericRequestDetails(details: Array<OrdinalVDXFObject> | null | undefined): boolean {
+    if (!Array.isArray(details)) return false;
+
+    let authIndex = -1;
+    let specialIndex = -1;
+
+    for (let i = 0; i < details.length; i++) {
+      const detail = details[i];
+
+      if (detail instanceof AuthenticationRequestOrdinalVDXFObject) {
+        if (authIndex !== -1) return false;
+        authIndex = i;
+      }
+
+      if (detail instanceof VerusPayInvoiceDetailsOrdinalVDXFObject || detail instanceof IdentityUpdateRequestOrdinalVDXFObject) {
+        if (specialIndex !== -1) return false;
+        specialIndex = i;
+      }
+    }
+
+    if (authIndex !== -1 && authIndex !== 0) return false;
+    if (specialIndex !== -1 && specialIndex !== details.length - 1) return false;
+
+    return true;
+  }
+
   createGenericRequest = (
     params: GenericRequestInterface,
     primaryAddrWif?: string,
@@ -1360,7 +1390,21 @@ class VerusIdInterface {
   signGenericRequest = this.signGenericEnvelope<GenericRequest>;
   signGenericResponse = this.signGenericEnvelope<GenericResponse>;
 
-  verifyGenericRequest = this.verifyGenericEnvelope<GenericRequest>;
+  verifyGenericRequest = async (
+    envelope: GenericRequest,
+    getIdentityResult?: GetIdentityResponse["result"],
+    chainIAddr?: string,
+    sigBlockTime?: number
+  ): Promise<boolean> => {
+    if (!this.isValidGenericRequestDetails(envelope.details)) return false;
+
+    return this.verifyGenericEnvelope<GenericRequest>(
+      envelope,
+      getIdentityResult,
+      chainIAddr,
+      sigBlockTime
+    );
+  };
   verifyGenericResponse = this.verifyGenericEnvelope<GenericResponse>;
 }
 
