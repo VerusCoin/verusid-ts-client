@@ -34,7 +34,9 @@ import {
   OrdinalVDXFObject,
   AuthenticationRequestOrdinalVDXFObject,
   IdentityUpdateRequestOrdinalVDXFObject,
-  VerusPayInvoiceDetailsOrdinalVDXFObject
+  VerusPayInvoiceDetailsOrdinalVDXFObject,
+  ProvisionIdentityDetailsOrdinalVDXFObject,
+  AppEncryptionRequestOrdinalVDXFObject
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -1349,6 +1351,8 @@ class VerusIdInterface {
 
     let authIndex = -1;
     let specialIndex = -1;
+    let provisioningIndex = -1;
+    let appEncryptIndex = -1;
 
     for (let i = 0; i < details.length; i++) {
       const detail = details[i];
@@ -1356,6 +1360,16 @@ class VerusIdInterface {
       if (detail instanceof AuthenticationRequestOrdinalVDXFObject) {
         if (authIndex !== -1) return false;
         authIndex = i;
+      }
+
+      if (detail instanceof ProvisionIdentityDetailsOrdinalVDXFObject) {
+        if (provisioningIndex !== -1) return false;
+        provisioningIndex = i;
+      }
+
+      if (detail instanceof AppEncryptionRequestOrdinalVDXFObject) {
+        if (appEncryptIndex !== -1) return false;
+        appEncryptIndex = i;
       }
 
       if (detail instanceof VerusPayInvoiceDetailsOrdinalVDXFObject || detail instanceof IdentityUpdateRequestOrdinalVDXFObject) {
@@ -1366,6 +1380,8 @@ class VerusIdInterface {
 
     if (authIndex !== -1 && authIndex !== 0) return false;
     if (specialIndex !== -1 && specialIndex !== details.length - 1) return false;
+    if (provisioningIndex !== -1 && (authIndex === -1 || provisioningIndex < authIndex)) return false;
+    if (appEncryptIndex !== -1 && (authIndex === -1 || appEncryptIndex < authIndex)) return false;
 
     return true;
   }

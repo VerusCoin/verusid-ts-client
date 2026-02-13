@@ -1,10 +1,12 @@
 import { VerusIdInterface } from '../../index'
 import { TEST_ID, VERUSTEST_I_ADDR } from '../fixtures/verusid';
 import {
+  AppEncryptionRequestOrdinalVDXFObject,
   AuthenticationRequestOrdinalVDXFObject,
   IdentityUpdateRequestOrdinalVDXFObject,
   IdentityUpdateResponseOrdinalVDXFObject,
   OrdinalVDXFObject,
+  ProvisionIdentityDetailsOrdinalVDXFObject,
   VerusPayInvoiceDetails,
   VerusPayInvoiceDetailsOrdinalVDXFObject
 } from 'verus-typescript-primitives';
@@ -70,6 +72,102 @@ describe('verifyGenericRequest details validation', () => {
     expect(ok).toBe(false);
   });
 
+  test('rejects ProvisionIdentityDetails without AuthenticationRequest', async () => {
+    const req = await createSignedRequest([
+      new ProvisionIdentityDetailsOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
+  test('rejects AppEncryptionRequest without AuthenticationRequest', async () => {
+    const req = await createSignedRequest([
+      new AppEncryptionRequestOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
+  test('rejects ProvisionIdentityDetails before AuthenticationRequest', async () => {
+    const req = await createSignedRequest([
+      new ProvisionIdentityDetailsOrdinalVDXFObject(),
+      new AuthenticationRequestOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
+  test('rejects AppEncryptionRequest before AuthenticationRequest', async () => {
+    const req = await createSignedRequest([
+      new AppEncryptionRequestOrdinalVDXFObject(),
+      new AuthenticationRequestOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
+  test('rejects multiple ProvisionIdentityDetails objects', async () => {
+    const req = await createSignedRequest([
+      new AuthenticationRequestOrdinalVDXFObject(),
+      new ProvisionIdentityDetailsOrdinalVDXFObject(),
+      new ProvisionIdentityDetailsOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
+  test('rejects multiple AppEncryptionRequest objects', async () => {
+    const req = await createSignedRequest([
+      new AuthenticationRequestOrdinalVDXFObject(),
+      new AppEncryptionRequestOrdinalVDXFObject(),
+      new AppEncryptionRequestOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
   test('rejects IdentityUpdateRequest when not last', async () => {
     const req = await createSignedRequest([
       new IdentityUpdateRequestOrdinalVDXFObject({ data: TEST_ID_UPDATE_REQUEST_DETAILS }),
@@ -106,6 +204,23 @@ describe('verifyGenericRequest details validation', () => {
     const req = await createSignedRequest([
       new AuthenticationRequestOrdinalVDXFObject(),
       new IdentityUpdateRequestOrdinalVDXFObject({ data: TEST_ID_UPDATE_REQUEST_DETAILS })
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(true);
+  });
+
+  test('accepts single ProvisionIdentityDetails and AppEncryptionRequest after AuthenticationRequest', async () => {
+    const req = await createSignedRequest([
+      new AuthenticationRequestOrdinalVDXFObject(),
+      new ProvisionIdentityDetailsOrdinalVDXFObject(),
+      new AppEncryptionRequestOrdinalVDXFObject()
     ]);
 
     const ok = await VerusId.verifyGenericRequest(
