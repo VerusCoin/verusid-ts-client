@@ -1409,9 +1409,14 @@ class VerusIdInterface {
     envelope: GenericRequest,
     getIdentityResult?: GetIdentityResponse["result"],
     chainIAddr?: string,
-    sigBlockTime?: number
+    sigBlockTime?: number,
+    acceptUnsigned = false
   ): Promise<boolean> => {
     if (!this.isValidGenericRequestDetails(envelope.details)) return false;
+
+    if (acceptUnsigned && !envelope.isSigned()) {
+      return true;
+    }
 
     return this.verifyGenericEnvelope<GenericRequest>(
       envelope,

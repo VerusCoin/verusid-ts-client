@@ -118,7 +118,7 @@ declare class VerusIdInterface {
     createGenericResponse: (params: GenericResponseInterface, primaryAddrWif?: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string) => Promise<GenericResponse>;
     signGenericRequest: (request: GenericRequest, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number) => Promise<GenericRequest>;
     signGenericResponse: (request: GenericResponse, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number) => Promise<GenericResponse>;
-    verifyGenericRequest: (envelope: GenericRequest, getIdentityResult?: GetIdentityResponse["result"], chainIAddr?: string, sigBlockTime?: number) => Promise<boolean>;
+    verifyGenericRequest: (envelope: GenericRequest, getIdentityResult?: GetIdentityResponse["result"], chainIAddr?: string, sigBlockTime?: number, acceptUnsigned?: boolean) => Promise<boolean>;
     verifyGenericResponse: (envelope: GenericResponse, getIdentityResult?: GetIdentityResponse["result"], chainIAddr?: string, sigBlockTime?: number) => Promise<boolean>;
 }
 export default VerusIdInterface;

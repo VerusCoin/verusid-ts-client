@@ -3,6 +3,7 @@ import { TEST_ID, VERUSTEST_I_ADDR } from '../fixtures/verusid';
 import {
   AppEncryptionRequestOrdinalVDXFObject,
   AuthenticationRequestOrdinalVDXFObject,
+  GenericRequest,
   IdentityUpdateRequestOrdinalVDXFObject,
   IdentityUpdateResponseOrdinalVDXFObject,
   OrdinalVDXFObject,
@@ -228,6 +229,80 @@ describe('verifyGenericRequest details validation', () => {
       TEST_ID,
       VERUSTEST_I_ADDR,
       TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(true);
+  });
+});
+
+describe('verifyGenericRequest acceptUnsigned param', () => {
+  const VerusId = new VerusIdInterface("VRSCTEST", "127.0.0.1");
+
+  function makeUnsignedRequest(details: Array<OrdinalVDXFObject>) {
+    return new GenericRequest({ details, createdAt: TEST_CREATED_AT, salt: TEST_SALT });
+  }
+
+  async function createSignedRequest(details: Array<OrdinalVDXFObject>) {
+    return VerusId.createGenericRequest(
+      {
+        createdAt: TEST_CREATED_AT,
+        salt: TEST_SALT,
+        details: details,
+        signature: new VerifiableSignatureData(TEST_UNSIGNED_VERIFIABLE_SIG_DATA)
+      },
+      "UrEJQMk9PD4Fo9i8FNb1ZSFRrC9TrD4j6CGbFvbFHVH83bStroHH",
+      TEST_ID,
+      18167,
+      VERUSTEST_I_ADDR
+    );
+  }
+
+  test('returns true for unsigned request when acceptUnsigned is true', async () => {
+    const req = makeUnsignedRequest([new AuthenticationRequestOrdinalVDXFObject()]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
+
+    expect(ok).toBe(true);
+  });
+
+  test('returns false for unsigned request when acceptUnsigned is false (default)', async () => {
+    const req = makeUnsignedRequest([new AuthenticationRequestOrdinalVDXFObject()]);
+
+    const ok = await VerusId.verifyGenericRequest(req);
+
+    expect(ok).toBe(false);
+  });
+
+  test('returns false for unsigned request with invalid details even when acceptUnsigned is true', async () => {
+    // ProvisionIdentityDetails without AuthenticationRequest is invalid
+    const req = makeUnsignedRequest([new ProvisionIdentityDetailsOrdinalVDXFObject()]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
+
+    expect(ok).toBe(false);
+  });
+
+  test('verifies signature normally for signed request even when acceptUnsigned is true', async () => {
+    const req = await createSignedRequest([new AuthenticationRequestOrdinalVDXFObject()]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber(),
+      true
     );
 
     expect(ok).toBe(true);
