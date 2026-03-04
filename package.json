@@ -13,7 +13,8 @@
     "prepublishOnly": "npm test && npm run lint",
     "preversion": "npm run lint",
     "version": "npm run format && git add -A src",
-    "postversion": "git push && git push --tags"
+    "postversion": "git push && git push --tags",
+    "update-verus-libs": "yarn remove verus-typescript-primitives && yarn add git+https://github.com/VerusCoin/verus-typescript-primitives.git && yarn remove verusd-rpc-ts-client && yarn add git+https://github.com/VerusCoin/verusd-rpc-ts-client"
   },
   "repository": {
     "type": "git",
