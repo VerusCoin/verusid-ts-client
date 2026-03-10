@@ -51,6 +51,7 @@ import { BlockInfo } from "verus-typescript-primitives/dist/block/BlockInfo";
 import BigNumber from "bignumber.js"
 import { BN } from "bn.js";
 import { GenericEnvelope } from "verus-typescript-primitives/dist/vdxf/classes/envelope/GenericEnvelope";
+import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
 
 const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
@@ -62,8 +63,14 @@ const LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD = 3600
 class VerusIdInterface {
   interface: VerusdRpcInterface;
 
-  constructor(chain: string, baseURL: string, config?: AxiosRequestConfig) {
-    this.interface = new VerusdRpcInterface(chain, baseURL, config);
+  constructor(
+    chain: string, 
+    baseURL: string, 
+    config?: AxiosRequestConfig, 
+    rpcRequestOverride?: RPCRequestOverride, 
+    APIAuth?: APIAuthData
+  ) {
+    this.interface = new VerusdRpcInterface(chain, baseURL, config, rpcRequestOverride, APIAuth);
   }
 
   async getCurrentHeight() {
