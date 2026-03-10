@@ -340,7 +340,7 @@
 
 "@bitgo/utxo-lib@git+https://github.com/VerusCoin/BitGoJS.git#utxo-lib-verus":
   version "1.9.6"
-  resolved "git+https://github.com/VerusCoin/BitGoJS.git#0347482a66e2f37c2f879a04f1c6176da76c1844"
+  resolved "git+https://github.com/VerusCoin/BitGoJS.git#3f081222778dedd8df413832ed09f38a0a72083c"
   dependencies:
     "@bitgo/blake2b" "3.0.1"
     "@noble/curves" "1.9.7"
@@ -1347,7 +1347,12 @@ bip66@1.1.0:
   resolved "https://registry.yarnpkg.com/bip66/-/bip66-1.1.0.tgz#c5551d49d1696d78211be047e997fe7aac8820c5"
   integrity sha512-dBoAPJYg6HaaQeJGr4cNiqat1meGzlrv2qX+EJcW5q0zEdryMSLKlQKdTaCtDnrzEUPkwmlYqsD7ANaye4BEfg==
 
-bitcoin-ops@^1.3.0, "bitcoin-ops@git+https://github.com/VerusCoin/bitcoin-ops":
+bitcoin-ops@^1.3.0:
+  version "1.4.1"
+  resolved "https://registry.yarnpkg.com/bitcoin-ops/-/bitcoin-ops-1.4.1.tgz#e45de620398e22fd4ca6023de43974ff42240278"
+  integrity sha512-pef6gxZFztEhaE9RY9HmWVmiIHqCb2OyS4HPKkpc6CIiiOa3Qmuoylxc5P2EkU3w+5eTSifI9SEZC88idAIGow==
+
+"bitcoin-ops@git+https://github.com/VerusCoin/bitcoin-ops":
   version "1.4.1"
   resolved "git+https://github.com/VerusCoin/bitcoin-ops#a5f8f56e658301bc39881d41740b3a0010530efd"
 
@@ -3712,7 +3717,7 @@ varuint-bitcoin@1.0.4:
 
 "verus-typescript-primitives@git+https://github.com/VerusCoin/verus-typescript-primitives.git":
   version "1.0.0"
-  resolved "git+https://github.com/VerusCoin/verus-typescript-primitives.git#39e8c31ba0ef15dfff9c999925310be7af58029d"
+  resolved "git+https://github.com/VerusCoin/verus-typescript-primitives.git#49b8a20421fa5d6f4e7089cd7b8ed074e1b37a18"
   dependencies:
     base64url "3.0.1"
     bech32 "2.0.0"
@@ -3723,7 +3728,7 @@ varuint-bitcoin@1.0.4:
 
 "verusd-rpc-ts-client@git+https://github.com/VerusCoin/verusd-rpc-ts-client":
   version "0.1.0"
-  resolved "git+https://github.com/VerusCoin/verusd-rpc-ts-client#1a1838c3ddbe5de1b4a22c492ff5aaab2065405a"
+  resolved "git+https://github.com/VerusCoin/verusd-rpc-ts-client#392b756dfe0ad2edcc89832613b7db631e033e89"
   dependencies:
     axios "1.13.5"
     blake2b "https://github.com/VerusCoin/blake2b"

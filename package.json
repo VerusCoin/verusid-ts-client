@@ -14,7 +14,7 @@
     "preversion": "npm run lint",
     "version": "npm run format && git add -A src",
     "postversion": "git push && git push --tags",
-    "update-verus-libs": "yarn remove verus-typescript-primitives && yarn add git+https://github.com/VerusCoin/verus-typescript-primitives.git && yarn remove verusd-rpc-ts-client && yarn add git+https://github.com/VerusCoin/verusd-rpc-ts-client"
+    "update-verus-libs": "yarn remove verus-typescript-primitives && yarn add git+https://github.com/VerusCoin/verus-typescript-primitives.git && yarn remove verusd-rpc-ts-client && yarn add git+https://github.com/VerusCoin/verusd-rpc-ts-client && yarn remove @bitgo/utxo-lib && yarn add git+https://github.com/VerusCoin/BitGoJS.git#utxo-lib-verus"
   },
   "repository": {
     "type": "git",
