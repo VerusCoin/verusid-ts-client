@@ -2,9 +2,10 @@ import { AxiosRequestConfig } from "axios";
 import { GetIdentityResponse, LoginConsentRequest, LoginConsentChallenge, LoginConsentProvisioningRequest, LoginConsentProvisioningChallenge, LoginConsentResponse, LoginConsentDecision, LoginConsentProvisioningDecision, LoginConsentProvisioningResponse, SignedSessionObject, SignedSessionObjectData, VerusPayInvoice, VerusPayInvoiceDetails, Identity, GetAddressUtxosResponse, FundRawTransactionResponse, IdentityUpdateRequestDetails, GenericRequest, GenericRequestInterface, GenericResponse, GenericResponseInterface } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import BigNumber from "bignumber.js";
+import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
 declare class VerusIdInterface {
     interface: VerusdRpcInterface;
-    constructor(chain: string, baseURL: string, config?: AxiosRequestConfig);
+    constructor(chain: string, baseURL: string, config?: AxiosRequestConfig, rpcRequestOverride?: RPCRequestOverride, APIAuth?: APIAuthData);
     getCurrentHeight(): Promise<number>;
     getChainId(): Promise<string>;
     signMessage(iAddrOrIdentity: string, message: string, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string): Promise<string>;
@@ -113,11 +114,11 @@ declare class VerusIdInterface {
     private createGenericEnvelope;
     private signGenericEnvelope;
     private verifyGenericEnvelope;
-    private isValidGenericRequestDetails;
     createGenericRequest: (params: GenericRequestInterface, primaryAddrWif?: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string) => Promise<GenericRequest>;
     createGenericResponse: (params: GenericResponseInterface, primaryAddrWif?: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string) => Promise<GenericResponse>;
     signGenericRequest: (request: GenericRequest, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number) => Promise<GenericRequest>;
     signGenericResponse: (request: GenericResponse, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number) => Promise<GenericResponse>;
+    static validateUnsignedGenericRequest(request: GenericRequest): boolean;
     verifyGenericRequest: (envelope: GenericRequest, getIdentityResult?: GetIdentityResponse["result"], chainIAddr?: string, sigBlockTime?: number, acceptUnsigned?: boolean) => Promise<boolean>;
     verifyGenericResponse: (envelope: GenericResponse, getIdentityResult?: GetIdentityResponse["result"], chainIAddr?: string, sigBlockTime?: number) => Promise<boolean>;
 }

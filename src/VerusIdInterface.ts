@@ -1353,7 +1353,28 @@ class VerusIdInterface {
     );
   }
 
-  private isValidGenericRequestDetails(details: Array<OrdinalVDXFObject> | null | undefined): boolean {
+  createGenericRequest = (
+    params: GenericRequestInterface,
+    primaryAddrWif?: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number,
+    chainIAddr?: string
+  ) => this.createGenericEnvelope<GenericRequest, GenericRequestInterface>(GenericRequest, params, primaryAddrWif, getIdentityResult, currentHeight, chainIAddr);
+
+  createGenericResponse = (
+    params: GenericResponseInterface,
+    primaryAddrWif?: string,
+    getIdentityResult?: GetIdentityResponse["result"],
+    currentHeight?: number,
+    chainIAddr?: string
+  ) => this.createGenericEnvelope<GenericResponse, GenericResponseInterface>(GenericResponse, params, primaryAddrWif, getIdentityResult, currentHeight, chainIAddr);
+
+  signGenericRequest = this.signGenericEnvelope<GenericRequest>;
+  signGenericResponse = this.signGenericEnvelope<GenericResponse>;
+
+  static validateUnsignedGenericRequest(request: GenericRequest) {
+    const details = request.details;
+
     if (!Array.isArray(details)) return false;
 
     let authIndex = -1;
@@ -1393,25 +1414,6 @@ class VerusIdInterface {
     return true;
   }
 
-  createGenericRequest = (
-    params: GenericRequestInterface,
-    primaryAddrWif?: string,
-    getIdentityResult?: GetIdentityResponse["result"],
-    currentHeight?: number,
-    chainIAddr?: string
-  ) => this.createGenericEnvelope<GenericRequest, GenericRequestInterface>(GenericRequest, params, primaryAddrWif, getIdentityResult, currentHeight, chainIAddr);
-
-  createGenericResponse = (
-    params: GenericResponseInterface,
-    primaryAddrWif?: string,
-    getIdentityResult?: GetIdentityResponse["result"],
-    currentHeight?: number,
-    chainIAddr?: string
-  ) => this.createGenericEnvelope<GenericResponse, GenericResponseInterface>(GenericResponse, params, primaryAddrWif, getIdentityResult, currentHeight, chainIAddr);
-
-  signGenericRequest = this.signGenericEnvelope<GenericRequest>;
-  signGenericResponse = this.signGenericEnvelope<GenericResponse>;
-
   verifyGenericRequest = async (
     envelope: GenericRequest,
     getIdentityResult?: GetIdentityResponse["result"],
@@ -1419,7 +1421,7 @@ class VerusIdInterface {
     sigBlockTime?: number,
     acceptUnsigned = false
   ): Promise<boolean> => {
-    if (!this.isValidGenericRequestDetails(envelope.details)) return false;
+    if (!VerusIdInterface.validateUnsignedGenericRequest(envelope)) return false;
 
     if (acceptUnsigned && !envelope.isSigned()) {
       return true;
