@@ -976,7 +976,7 @@ class VerusIdInterface {
       const identityFromRawTransactionJson = identityFromRawTransaction.toJson();
       identityOnOutput = identityFromServer;
 
-      const partialIdentity = identity.identity!;
+      const partialIdentity = identity.identity!.withResolvedContentMultiMap();
       const serverIdentityJson = identityFromServer.toJson();
       const partialIdentityJson = partialIdentity.toJson();
 
@@ -1023,7 +1023,7 @@ class VerusIdInterface {
       
       // Create partialidentity from the server identity json, taking only keys that were submitted to be modified,
       // and then serialize it and compare it to the partial identity that was submitted, to ensure they are the same.
-      const serverPartialIdChangedComp = PartialIdentity.fromJson(serverKeysChangedCompJson);
+      const serverPartialIdChangedComp = PartialIdentity.fromJson(serverKeysChangedCompJson).withResolvedContentMultiMap();
       if (serverPartialIdChangedComp.toBuffer().toString('hex') !== partialIdentity.toBuffer().toString('hex')) {
         throw new Error(
           "Identity update request changes do not appear to match the changes in the identity transaction, got " + 
@@ -1033,8 +1033,8 @@ class VerusIdInterface {
         );
       }
 
-      const serverPartialIdUnchangedComp = PartialIdentity.fromJson(serverKeysUnchangedCompJson);
-      const fromTxPartialIdUnchangedComp = PartialIdentity.fromJson(fromTxKeysUnchangedCompJson);
+      const serverPartialIdUnchangedComp = PartialIdentity.fromJson(serverKeysUnchangedCompJson).withResolvedContentMultiMap();
+      const fromTxPartialIdUnchangedComp = PartialIdentity.fromJson(fromTxKeysUnchangedCompJson).withResolvedContentMultiMap();
       if (serverPartialIdUnchangedComp.toBuffer().toString('hex') !== fromTxPartialIdUnchangedComp.toBuffer().toString('hex')) {
         throw new Error(
           "Unchanged identity properties returned from server do not appear to match the unchanged values from the identity transaction, got " + 
