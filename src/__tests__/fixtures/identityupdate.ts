@@ -1,5 +1,5 @@
 import { BN } from "bn.js";
-import { ContentMultiMap, DATA_TYPE_MMRDATA, IDENTITY_VERSION_PBAAS, IdentityID, IdentityUpdateRequestDetails, IdentityUpdateResponseDetails, KeyID, PartialIdentity, PartialMMRData, PartialSignData, PartialSignDataInitData, SaplingPaymentAddress } from "verus-typescript-primitives";
+import { CompactIAddressObject, ContentMultiMap, DATA_TYPE_MMRDATA, IDENTITY_VERSION_PBAAS, IdentityID, IdentityUpdateRequestDetails, IdentityUpdateResponseDetails, KeyID, KvMap, PartialIdentity, PartialMMRData, PartialSignData, PartialSignDataInitData, SaplingPaymentAddress, SignDataMap } from "verus-typescript-primitives";
 import { TEST_EXPIRY_HEIGHT, TEST_REQUEST_ID, TEST_SYSTEM_ID, TEST_TXID_RESPONSE } from "./genericenvelope";
 
 export const TEST_CONTENTMAP = new Map();
@@ -9,16 +9,16 @@ TEST_CONTENTMAP.set("iK7a5JNJnbeuYWVHCDRpJosj3irGJ5Qa8c", Buffer.alloc(32));
 export const TEST_ID_UPDATE_PARTIAL_IDENTITY = new PartialIdentity({
   flags: new BN("0"),
   version: IDENTITY_VERSION_PBAAS,
-  min_sigs: new BN(1),
-  primary_addresses: [
+  minSigs: new BN(1),
+  primaryAddresses: [
     KeyID.fromAddress("RQVsJRf98iq8YmRQdehzRcbLGHEx6YfjdH"),
     KeyID.fromAddress("RP4Qct9197i5vrS11qHVtdyRRoAHVNJS47")
   ],
   parent: IdentityID.fromAddress("iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq"),
-  system_id: IdentityID.fromAddress("iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq"),
+  systemId: IdentityID.fromAddress("iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq"),
   name: "TestID",
-  content_map: TEST_CONTENTMAP,
-  content_multimap: ContentMultiMap.fromJson({
+  contentMap: TEST_CONTENTMAP,
+  contentMultiMap: ContentMultiMap.fromJson({
     iPsFBfFoCcxtuZNzE8yxPQhXVn4dmytf8j: [
       { iK7a5JNJnbeuYWVHCDRpJosj3irGJ5Qa8c: 'Test String 123454321' },
       { iK7a5JNJnbeuYWVHCDRpJosj3irGJ5Qa8c: 'Test String 123454321' },
@@ -33,10 +33,10 @@ export const TEST_ID_UPDATE_PARTIAL_IDENTITY = new PartialIdentity({
     ],
     i81XL8ZpuCo9jmWLv5L5ikdxrGuHrrpQLz: { iK7a5JNJnbeuYWVHCDRpJosj3irGJ5Qa8c: 'Test String 123454321' }
   }),
-  recovery_authority: IdentityID.fromAddress("i81XL8ZpuCo9jmWLv5L5ikdxrGuHrrpQLz"),
-  revocation_authority: IdentityID.fromAddress("i5v3h9FWVdRFbNHU7DfcpGykQjRaHtMqu7"),
-  unlock_after: new BN("123456", 10),
-  private_addresses: [SaplingPaymentAddress.fromAddressString("zs1wczplx4kegw32h8g0f7xwl57p5tvnprwdmnzmdnsw50chcl26f7tws92wk2ap03ykaq6jyyztfa")]
+  recoveryAuthority: IdentityID.fromAddress("i81XL8ZpuCo9jmWLv5L5ikdxrGuHrrpQLz"),
+  revocationAuthority: IdentityID.fromAddress("i5v3h9FWVdRFbNHU7DfcpGykQjRaHtMqu7"),
+  unlockAfter: new BN("123456", 10),
+  privateAddresses: [SaplingPaymentAddress.fromAddressString("zs1wczplx4kegw32h8g0f7xwl57p5tvnprwdmnzmdnsw50chcl26f7tws92wk2ap03ykaq6jyyztfa")]
 });
 
 export const TEST_ID_UPDATE_MMR_DATA = new PartialMMRData({
@@ -70,8 +70,8 @@ export const TEST_ID_UPDATE_SIGNDATA_MMR: PartialSignDataInitData = {
   data: TEST_ID_UPDATE_MMR_DATA, // This is the PartialMMRData object
 }
 
-export const TEST_ID_UPDATE_SIGNDATA_MAP = new Map();
-TEST_ID_UPDATE_SIGNDATA_MAP.set("iBvyi1nuCrTA4g44xN9N7EU1t6a7gwb4h8", new PartialSignData(TEST_ID_UPDATE_SIGNDATA_MMR))
+export const TEST_ID_UPDATE_SIGNDATA_MAP: SignDataMap = new KvMap();
+TEST_ID_UPDATE_SIGNDATA_MAP.set(CompactIAddressObject.fromAddress("iBvyi1nuCrTA4g44xN9N7EU1t6a7gwb4h8"), new PartialSignData(TEST_ID_UPDATE_SIGNDATA_MMR))
 
 export const TEST_ID_UPDATE_REQUEST_DETAILS = new IdentityUpdateRequestDetails({
   requestID: TEST_REQUEST_ID,

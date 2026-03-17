@@ -1009,11 +1009,11 @@ class VerusIdInterface {
       // Ignore cmm fields that contained the "data" field because we can't establish if the cmm and/or encryption was 
       // done correctly yet
       if (identity.containsSignData()) {
-        const signDataKeys = identity.signDataMap!.keys();
-
         if (serverKeysChangedCompJson.contentmultimap) {
-          for (const key of signDataKeys) {
-            delete serverKeysChangedCompJson.contentmultimap[key];
+          for (const [key, value] of identity.signDataMap!.entries()) {
+            const iAddrKey = key.toAddress();
+
+            delete serverKeysChangedCompJson.contentmultimap[iAddrKey];
           }
         } else throw new Error("Expected cmm in identity update request");
       } else if (unfundedTx.outs.length > 1) {
