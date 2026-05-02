@@ -3,6 +3,7 @@ import { TEST_ID, VERUSTEST_I_ADDR } from '../fixtures/verusid';
 import {
   AppEncryptionRequestOrdinalVDXFObject,
   AuthenticationRequestOrdinalVDXFObject,
+  CreateWalletBackupDetailsOrdinalVDXFObject,
   GenericRequest,
   IdentityUpdateRequestOrdinalVDXFObject,
   IdentityUpdateResponseOrdinalVDXFObject,
@@ -169,6 +170,38 @@ describe('verifyGenericRequest details validation', () => {
     expect(ok).toBe(false);
   });
 
+  test('rejects CreateWalletBackupDetails not at index 0', async () => {
+    const req = await createSignedRequest([
+      new IdentityUpdateResponseOrdinalVDXFObject({ data: TEST_ID_UPDATE_RESPONSE_DETAILS }),
+      new CreateWalletBackupDetailsOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
+  test('rejects multiple CreateWalletBackupDetails objects', async () => {
+    const req = await createSignedRequest([
+      new CreateWalletBackupDetailsOrdinalVDXFObject(),
+      new CreateWalletBackupDetailsOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(false);
+  });
+
   test('rejects IdentityUpdateRequest when not last', async () => {
     const req = await createSignedRequest([
       new IdentityUpdateRequestOrdinalVDXFObject({ data: TEST_ID_UPDATE_REQUEST_DETAILS }),
@@ -205,6 +238,22 @@ describe('verifyGenericRequest details validation', () => {
     const req = await createSignedRequest([
       new AuthenticationRequestOrdinalVDXFObject(),
       new IdentityUpdateRequestOrdinalVDXFObject({ data: TEST_ID_UPDATE_REQUEST_DETAILS })
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(true);
+  });
+
+  test('accepts single CreateWalletBackupDetails at index 0', async () => {
+    const req = await createSignedRequest([
+      new CreateWalletBackupDetailsOrdinalVDXFObject(),
+      new IdentityUpdateResponseOrdinalVDXFObject({ data: TEST_ID_UPDATE_RESPONSE_DETAILS })
     ]);
 
     const ok = await VerusId.verifyGenericRequest(

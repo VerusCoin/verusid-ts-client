@@ -36,7 +36,8 @@ import {
   IdentityUpdateRequestOrdinalVDXFObject,
   VerusPayInvoiceDetailsOrdinalVDXFObject,
   ProvisionIdentityDetailsOrdinalVDXFObject,
-  AppEncryptionRequestOrdinalVDXFObject
+  AppEncryptionRequestOrdinalVDXFObject,
+  CreateWalletBackupDetailsOrdinalVDXFObject
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -1381,6 +1382,7 @@ class VerusIdInterface {
     let specialIndex = -1;
     let provisioningIndex = -1;
     let appEncryptIndex = -1;
+    let walletBackupIndex = -1;
 
     for (let i = 0; i < details.length; i++) {
       const detail = details[i];
@@ -1400,6 +1402,11 @@ class VerusIdInterface {
         appEncryptIndex = i;
       }
 
+      if (detail instanceof CreateWalletBackupDetailsOrdinalVDXFObject) {
+        if (walletBackupIndex !== -1) return false;
+        walletBackupIndex = i;
+      }
+
       if (detail instanceof VerusPayInvoiceDetailsOrdinalVDXFObject || detail instanceof IdentityUpdateRequestOrdinalVDXFObject) {
         if (specialIndex !== -1) return false;
         specialIndex = i;
@@ -1407,6 +1414,7 @@ class VerusIdInterface {
     }
 
     if (authIndex !== -1 && authIndex !== 0) return false;
+    if (walletBackupIndex !== -1 && walletBackupIndex !== 0) return false;
     if (specialIndex !== -1 && specialIndex !== details.length - 1) return false;
     if (provisioningIndex !== -1 && (authIndex === -1 || provisioningIndex < authIndex)) return false;
     if (appEncryptIndex !== -1 && (authIndex === -1 || appEncryptIndex < authIndex)) return false;
