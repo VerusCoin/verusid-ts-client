@@ -266,6 +266,24 @@ describe('verifyGenericRequest details validation', () => {
     expect(ok).toBe(true);
   });
 
+  test('accepts AuthenticationRequest at index 1 after CreateWalletBackupDetails', async () => {
+    const req = await createSignedRequest([
+      new CreateWalletBackupDetailsOrdinalVDXFObject(),
+      new AuthenticationRequestOrdinalVDXFObject(),
+      new ProvisionIdentityDetailsOrdinalVDXFObject(),
+      new AppEncryptionRequestOrdinalVDXFObject()
+    ]);
+
+    const ok = await VerusId.verifyGenericRequest(
+      req,
+      TEST_ID,
+      VERUSTEST_I_ADDR,
+      TEST_CREATED_AT.toNumber()
+    );
+
+    expect(ok).toBe(true);
+  });
+
   test('accepts single ProvisionIdentityDetails and AppEncryptionRequest after AuthenticationRequest', async () => {
     const req = await createSignedRequest([
       new AuthenticationRequestOrdinalVDXFObject(),

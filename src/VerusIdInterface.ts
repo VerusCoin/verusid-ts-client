@@ -1413,8 +1413,8 @@ class VerusIdInterface {
       }
     }
 
-    if (authIndex !== -1 && authIndex !== 0) return false;
     if (walletBackupIndex !== -1 && walletBackupIndex !== 0) return false;
+    if (authIndex !== -1 && authIndex !== (walletBackupIndex === 0 ? 1 : 0)) return false;
     if (specialIndex !== -1 && specialIndex !== details.length - 1) return false;
     if (provisioningIndex !== -1 && (authIndex === -1 || provisioningIndex < authIndex)) return false;
     if (appEncryptIndex !== -1 && (authIndex === -1 || appEncryptIndex < authIndex)) return false;
