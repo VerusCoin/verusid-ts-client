@@ -1,8 +1,43 @@
 import { AxiosRequestConfig } from "axios";
-import { GetIdentityResponse, LoginConsentRequest, LoginConsentChallenge, LoginConsentProvisioningRequest, LoginConsentProvisioningChallenge, LoginConsentResponse, LoginConsentDecision, LoginConsentProvisioningDecision, LoginConsentProvisioningResponse, SignedSessionObject, SignedSessionObjectData, VerusPayInvoice, VerusPayInvoiceDetails, Identity, GetAddressUtxosResponse, FundRawTransactionResponse, IdentityUpdateRequestDetails, GenericRequest, GenericRequestInterface, GenericResponse, GenericResponseInterface } from "verus-typescript-primitives";
+import { GetIdentityResponse, LoginConsentRequest, LoginConsentChallenge, LoginConsentProvisioningRequest, LoginConsentProvisioningChallenge, LoginConsentResponse, LoginConsentDecision, LoginConsentProvisioningDecision, LoginConsentProvisioningResponse, SignedSessionObject, SignedSessionObjectData, VerusPayInvoice, VerusPayInvoiceDetails, Identity, GetAddressUtxosResponse, FundRawTransactionResponse, IdentityUpdateRequestDetails, GenericRequest, GenericRequestInterface, GenericResponse, GenericResponseInterface, TransferDestination } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import BigNumber from "bignumber.js";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
+export type CurrencyTransferOutput = {
+    currency: string;
+    satoshis: string;
+    convertto?: string;
+    exportto?: string;
+    feecurrency?: string;
+    via?: string;
+    feesatoshis?: string;
+    address: TransferDestination;
+    refundto?: TransferDestination;
+    preconvert?: boolean;
+    burn?: boolean;
+    burnweight?: boolean;
+    mintnew?: boolean;
+    importtosource?: boolean;
+    bridgeid?: string;
+    vdxftag?: string;
+};
+export type IdentityUpdateCurrencySweepOptions = {
+    chainIAddr?: string;
+    maxFee?: number;
+    fundRawTransactionResult?: FundRawTransactionResponse["result"];
+    currentHeight?: number;
+    updateIdentityTransactionHex?: string;
+    parseVdxfObjects?: boolean;
+    isTestnet?: boolean;
+    expectedIdentityPrimaryAddress?: string;
+    allowUnverifiedPrevouts?: boolean;
+};
+export type IdentityUpdateTransactionResult = {
+    hex: string;
+    utxos: GetAddressUtxosResponse["result"];
+    identity: Identity;
+    deltas: Map<string, BigNumber>;
+};
 declare class VerusIdInterface {
     interface: VerusdRpcInterface;
     constructor(chain: string, baseURL: string, config?: AxiosRequestConfig, rpcRequestOverride?: RPCRequestOverride, APIAuth?: APIAuthData);
@@ -86,19 +121,34 @@ declare class VerusIdInterface {
     static signVerusIdProvisioningRequest(request: LoginConsentProvisioningRequest, addrWif: string): Promise<LoginConsentProvisioningRequest>;
     static createVerusIdProvisioningRequest(signingAddress: string, challenge: LoginConsentProvisioningChallenge, addrWif?: string): Promise<LoginConsentProvisioningRequest>;
     static verifyVerusIdProvisioningRequest(request: LoginConsentProvisioningRequest, address: string): Promise<LoginConsentProvisioningRequest>;
-    createUpdateIdentityTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, maxFee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, updateIdentityTransactionHex?: string, parseVdxfObjects?: boolean, isTestnet?: boolean): Promise<{
+    private static getIdentityFromIdTx;
+    private static addNegativeDelta;
+    private static addValidationFeesToDeltas;
+    private static addValidationSentToDeltas;
+    private static validateNoUnexpectedCurrencySent;
+    private static getExpectedSentFromSweepOutputs;
+    private static getDestinationFees;
+    private static getExpectedFeesFromSweepOutputs;
+    private static validateSweepSent;
+    private static validateFees;
+    private static getFundingUtxosFromTransaction;
+    private getVerifiedFundingUtxosFromTransaction;
+    private static combineUnfundedTransactions;
+    private static validateCompletedIdentityUpdateTransaction;
+    private static completeIdentityUpdateTransaction;
+    private static getIdentityDefinitionUtxo;
+    private static validateIdentityPrimaryAddress;
+    private prepareIdentityUpdateTransaction;
+    createUpdateIdentityTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, maxFee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, updateIdentityTransactionHex?: string, parseVdxfObjects?: boolean, isTestnet?: boolean, // This parameter is only necessary if you pass in an IdentityUpdateRequestDetails
+    allowUnverifiedPrevouts?: boolean): Promise<IdentityUpdateTransactionResult>;
+    createUpdateIdentityWithCurrencySweepTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, sweepOutputs: CurrencyTransferOutput[], utxoList: GetAddressUtxosResponse["result"], options?: IdentityUpdateCurrencySweepOptions): Promise<IdentityUpdateTransactionResult>;
+    createRevokeIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<{
         hex: string;
         utxos: GetAddressUtxosResponse["result"];
         identity: Identity;
         deltas: Map<string, BigNumber>;
     }>;
-    createRevokeIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number): Promise<{
-        hex: string;
-        utxos: GetAddressUtxosResponse["result"];
-        identity: Identity;
-        deltas: Map<string, BigNumber>;
-    }>;
-    createRecoverIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number): Promise<{
+    createRecoverIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<{
         hex: string;
         utxos: GetAddressUtxosResponse["result"];
         identity: Identity;
