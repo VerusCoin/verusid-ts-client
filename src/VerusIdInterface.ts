@@ -38,7 +38,28 @@ import {
   ProvisionIdentityDetailsOrdinalVDXFObject,
   AppEncryptionRequestOrdinalVDXFObject,
   CreateWalletBackupDetailsOrdinalVDXFObject,
-  TransferDestination
+  TransferDestination,
+  CurrencyValueMap,
+  ReserveTransfer,
+  RESERVE_TRANSFER_BURN_CHANGE_PRICE,
+  RESERVE_TRANSFER_BURN_CHANGE_WEIGHT,
+  RESERVE_TRANSFER_CONVERT,
+  RESERVE_TRANSFER_CROSS_SYSTEM,
+  RESERVE_TRANSFER_FEE_OUTPUT,
+  RESERVE_TRANSFER_IMPORT_TO_SOURCE,
+  RESERVE_TRANSFER_MINT_CURRENCY,
+  RESERVE_TRANSFER_PRECONVERT,
+  RESERVE_TRANSFER_RESERVE_TO_RESERVE,
+  RESERVE_TRANSFER_DESTINATION,
+  TokenOutput,
+  TOKEN_OUTPUT_VERSION_MULTIVALUE,
+  TxDestination,
+  KeyID,
+  IdentityID,
+  DEST_ID,
+  DEST_PKH,
+  FLAG_DEST_AUX,
+  SmartTransactionScript
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import {
@@ -47,7 +68,8 @@ import {
   networks,
   address,
   smarttxs,
-  Transaction
+  Transaction,
+  TransactionBuilder
 } from "@bitgo/utxo-lib";
 import { BlockInfo } from "verus-typescript-primitives/dist/block/BlockInfo";
 import BigNumber from "bignumber.js"
@@ -55,16 +77,21 @@ import { BN } from "bn.js";
 import { GenericEnvelope } from "verus-typescript-primitives/dist/vdxf/classes/envelope/GenericEnvelope";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
 
-const { createUnfundedCurrencyTransfer, createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
+const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
 const VRSC_I_ADDRESS = "i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV"
 const ID_SIG_VERSION = 2
 const ID_SIG_TYPE = 5
 const LOGIN_CONSENT_SIG_TIME_DIFF_THRESHOLD = 3600
+const BN_TYPE_REF = new BN(0, 10);
+type BNValue = typeof BN_TYPE_REF;
+const RESERVE_TRANSFER_DEFAULT_PER_STEP_FEE = new BN(10000, 10);
+const RESERVE_TRANSFER_DESTINATION_BYTE_DIVISOR = 128;
 
 export type CurrencyTransferOutput = {
-  currency: string;
-  satoshis: string;
+  currencies: {
+    [currency: string]: string | number;
+  };
   convertto?: string;
   exportto?: string;
   feecurrency?: string;
@@ -77,11 +104,11 @@ export type CurrencyTransferOutput = {
   burnweight?: boolean;
   mintnew?: boolean;
   importtosource?: boolean;
-  bridgeid?: string;
+  destsystem?: string;
   vdxftag?: string;
 }
 
-export type IdentityUpdateCurrencySweepOptions = {
+export type IdentityUpdateCurrencyTransferOptions = {
   chainIAddr?: string;
   maxFee?: number;
   fundRawTransactionResult?: FundRawTransactionResponse["result"];
@@ -988,48 +1015,365 @@ class VerusIdInterface {
     }
   }
 
-  private static getExpectedSentFromSweepOutputs(sweepOutputs: CurrencyTransferOutput[]): Map<string, BigNumber> {
+  private static getSatoshis(value: string | number, label: string): BNValue {
+    const satoshis = BigNumber(value);
+
+    if (!satoshis.isFinite() || satoshis.isNegative() || !satoshis.isInteger()) {
+      throw new Error(label + " must be a non-negative integer satoshi value.")
+    }
+
+    return new BN(satoshis.toFixed(0), 10);
+  }
+
+  private static getCurrencyValueMap(output: CurrencyTransferOutput): Map<string, BNValue> {
+    const valueMap = new Map<string, BNValue>();
+
+    for (const currency of Object.keys(output.currencies || {})) {
+      valueMap.set(currency, VerusIdInterface.getSatoshis(output.currencies[currency], "Currency transfer output currency value for " + currency));
+    }
+
+    if (valueMap.size === 0) throw new Error("Currency transfer output must include at least one currency value.");
+
+    return valueMap;
+  }
+
+  private static isReserveTransferOutput(output: CurrencyTransferOutput): boolean {
+    return output.convertto != null ||
+           output.exportto != null ||
+           output.via != null ||
+           output.preconvert === true ||
+           output.burn === true ||
+           output.burnweight === true ||
+           output.mintnew === true ||
+           output.importtosource === true;
+  }
+
+  private static getTxDestination(destination: TransferDestination): TxDestination {
+    const destinationType = destination.typeNoFlags();
+
+    if (destinationType.eq(DEST_PKH)) {
+      return new TxDestination(new KeyID(destination.destinationBytes));
+    } else if (destinationType.eq(DEST_ID)) {
+      return new TxDestination(new IdentityID(destination.destinationBytes));
+    } else throw new Error("Unsupported transfer destination type.");
+  }
+
+  private static getTokenOutputVersion(valueMap: Map<string, BNValue>): BNValue {
+    const version = new BN(1, 10);
+
+    return valueMap.size > 1 ? version.xor(TOKEN_OUTPUT_VERSION_MULTIVALUE) : version;
+  }
+
+  private static createSmartTransactionOutputScript(master: OptCCParams, params: OptCCParams): Buffer {
+    return new SmartTransactionScript(master, params).toBuffer();
+  }
+
+  private static cloneTransferDestination(destination: TransferDestination): TransferDestination {
+    return new TransferDestination({
+      type: destination.type,
+      destinationBytes: Buffer.from(destination.destinationBytes),
+      gatewayID: destination.gatewayID,
+      gatewayCode: destination.gatewayCode,
+      fees: destination.fees,
+      auxDests: (destination.auxDests || []).map(auxDest => VerusIdInterface.cloneTransferDestination(auxDest))
+    });
+  }
+
+  private static usesRefundDestination(output: CurrencyTransferOutput): boolean {
+    return output.exportto != null ||
+           output.preconvert === true ||
+           (
+             output.convertto != null &&
+             output.mintnew !== true &&
+             output.burn !== true &&
+             output.burnweight !== true
+           );
+  }
+
+  private static getReserveTransferDestination(output: CurrencyTransferOutput): TransferDestination {
+    const destination = VerusIdInterface.cloneTransferDestination(output.address);
+
+    if (output.refundto != null && VerusIdInterface.usesRefundDestination(output)) {
+      destination.type = destination.type.or(FLAG_DEST_AUX);
+      destination.auxDests = [
+        ...(destination.auxDests || []),
+        VerusIdInterface.cloneTransferDestination(output.refundto)
+      ];
+    }
+
+    return destination;
+  }
+
+  private static validateCurrencyTransferOutput(
+    output: CurrencyTransferOutput,
+    chainId: string,
+    isReserveTransfer: boolean
+  ) {
+    if (!isReserveTransfer) {
+      if (output.feecurrency != null) throw new Error("Fee currency is only valid for reserve transfer outputs.");
+      if (output.feesatoshis != null) throw new Error("Reserve transfer fee is only valid for reserve transfer outputs.");
+      if (output.refundto != null) throw new Error("Refund destination is only valid for reserve transfer outputs.");
+      if (output.destsystem != null) throw new Error("Destination system is only valid for reserve transfer outputs.");
+      return;
+    }
+
+    if (output.refundto != null && !VerusIdInterface.usesRefundDestination(output)) {
+      throw new Error("Refund destination is only valid for export, preconvert, or conversion reserve transfer outputs.");
+    }
+
+    if (output.via != null && output.convertto == null) {
+      throw new Error("Reserve-to-reserve currency transfers with via must also specify convertto.");
+    }
+
+    if (output.exportto != null && output.feesatoshis == null) {
+      throw new Error("Cross-system currency transfers require explicit reserve transfer feesatoshis.");
+    }
+
+    if (output.feecurrency != null && output.feecurrency !== chainId && output.feesatoshis == null) {
+      throw new Error("Non-native reserve transfer fee currency requires explicit feesatoshis.");
+    }
+
+    if ((output.preconvert || output.mintnew || output.burn || output.burnweight) &&
+        output.feecurrency != null &&
+        output.feecurrency !== chainId) {
+      throw new Error("Preconvert, mint, and burn reserve transfer fees must use the native chain currency.");
+    }
+
+    if (output.preconvert && output.convertto == null) {
+      throw new Error("Preconvert currency transfers require convertto.");
+    }
+
+    if (output.mintnew && output.convertto == null) {
+      throw new Error("Mint currency transfers require convertto.");
+    }
+  }
+
+  private static getReserveTransferDestinationCurrency(
+    output: CurrencyTransferOutput,
+    currencies: string[]
+  ): { destCurrencyID: string, secondReserveID?: string, destSystemID?: string } {
+    const primaryCurrency = currencies[0];
+    const convertTo = output.convertto ? output.convertto : (output.exportto ? output.exportto : primaryCurrency);
+    const destCurrencyID = output.via ? output.via : convertTo;
+    const secondReserveID = output.via ? output.convertto : undefined;
+
+    return {
+      destCurrencyID,
+      secondReserveID,
+      destSystemID: output.destsystem ? output.destsystem : output.exportto
+    }
+  }
+
+  private static getReserveTransferFlags(output: CurrencyTransferOutput, currencies: string[]): BNValue {
+    let flags = new BN(1, 10);
+    const isConversion = output.convertto != null && (currencies.length !== 1 || output.convertto !== currencies[0]);
+
+    if (output.importtosource) flags = flags.or(RESERVE_TRANSFER_IMPORT_TO_SOURCE);
+    if (output.via != null && output.convertto != null) flags = flags.or(RESERVE_TRANSFER_RESERVE_TO_RESERVE);
+    if (output.exportto != null) flags = flags.or(RESERVE_TRANSFER_CROSS_SYSTEM);
+    if (isConversion) flags = flags.or(RESERVE_TRANSFER_CONVERT);
+    if (output.preconvert) flags = flags.or(RESERVE_TRANSFER_PRECONVERT);
+    if (output.mintnew) flags = flags.or(RESERVE_TRANSFER_MINT_CURRENCY);
+    if (output.burn) flags = flags.or(RESERVE_TRANSFER_BURN_CHANGE_PRICE);
+    if (output.burnweight) flags = flags.or(RESERVE_TRANSFER_BURN_CHANGE_WEIGHT);
+
+    return flags;
+  }
+
+  private static calculateReserveTransferFee(destination: TransferDestination, flags: BNValue): BNValue {
+    if (flags.and(RESERVE_TRANSFER_FEE_OUTPUT).gt(new BN(0, 10))) return new BN(0, 10);
+
+    const baseFee = RESERVE_TRANSFER_DEFAULT_PER_STEP_FEE.shln(1);
+    const destinationSizeSteps = Math.floor(destination.destinationBytes.length / RESERVE_TRANSFER_DESTINATION_BYTE_DIVISOR);
+
+    return baseFee.add(baseFee.mul(new BN(destinationSizeSteps, 10)));
+  }
+
+  private static getReserveTransferFeeSatoshis(output: CurrencyTransferOutput, flags: BNValue): BNValue {
+    return output.feesatoshis != null ?
+      VerusIdInterface.getSatoshis(output.feesatoshis, "Reserve transfer fee") :
+      VerusIdInterface.calculateReserveTransferFee(output.address, flags);
+  }
+
+  private static getReserveTransferFeeCurrency(output: CurrencyTransferOutput, chainId: string): string {
+    if (output.preconvert || output.mintnew || output.burn || output.burnweight) return chainId;
+
+    return output.feecurrency ? output.feecurrency : chainId;
+  }
+
+  private static hasGatewayLeg(destination: TransferDestination): boolean {
+    return destination.isGateway() && destination.gatewayID != null;
+  }
+
+  private static getGatewayLegFees(destination: TransferDestination): BNValue {
+    return VerusIdInterface.hasGatewayLeg(destination) ?
+      VerusIdInterface.getSatoshis(destination.fees ? destination.fees.toString() : 0, "Reserve transfer gateway fee") :
+      new BN(0, 10);
+  }
+
+  private static createUnfundedCurrencyTransferTransaction(
+    chainId: string,
+    currencyTransferOutputs: CurrencyTransferOutput[],
+    expiryHeight: number
+  ): string {
+    const txb = new TransactionBuilder(networks.verus);
+
+    txb.setVersion(4);
+    txb.setExpiryHeight(expiryHeight);
+    txb.setVersionGroupId(0x892f2085);
+
+    for (const output of currencyTransferOutputs) {
+      if (output.vdxftag != null) throw new Error("VDXF tags not fully implemented");
+      if (output.address == null) throw new Error("Must specify address for all outputs");
+
+      const valueMap = VerusIdInterface.getCurrencyValueMap(output);
+      const valueCurrencies = Array.from(valueMap.keys());
+      const isReserveTransfer = VerusIdInterface.isReserveTransferOutput(output);
+      VerusIdInterface.validateCurrencyTransferOutput(output, chainId, isReserveTransfer);
+      const nativeValue = valueMap.get(chainId) || new BN(0, 10);
+      const feeCurrency = isReserveTransfer ?
+        VerusIdInterface.getReserveTransferFeeCurrency(output, chainId) :
+        chainId;
+      const flags = isReserveTransfer ?
+        VerusIdInterface.getReserveTransferFlags(output, valueCurrencies) :
+        new BN(1, 10);
+      const feeSatoshis = isReserveTransfer ?
+        VerusIdInterface.getReserveTransferFeeSatoshis(output, flags) :
+        new BN(0, 10);
+      const reserveTransferDestination = isReserveTransfer ?
+        VerusIdInterface.getReserveTransferDestination(output) :
+        output.address;
+      const gatewayLegFees = isReserveTransfer ?
+        VerusIdInterface.getGatewayLegFees(reserveTransferDestination) :
+        new BN(0, 10);
+      const nativeFeeValue = isReserveTransfer && feeCurrency === chainId ? feeSatoshis.add(gatewayLegFees) : new BN(0, 10);
+      const outputNativeValue = nativeValue.add(nativeFeeValue);
+
+      if (isReserveTransfer) {
+        const reserveDestination = VerusIdInterface.getTxDestination(RESERVE_TRANSFER_DESTINATION);
+        const { destCurrencyID, secondReserveID, destSystemID } = VerusIdInterface.getReserveTransferDestinationCurrency(output, valueCurrencies);
+        const values = new CurrencyValueMap({
+          valueMap,
+          multivalue: valueMap.size > 1
+        });
+
+        const reserveTransfer = new ReserveTransfer({
+          values,
+          version: VerusIdInterface.getTokenOutputVersion(valueMap),
+          flags,
+          feeCurrencyID: feeCurrency,
+          feeAmount: feeSatoshis,
+          transferDestination: reserveTransferDestination,
+          destCurrencyID,
+          secondReserveID,
+          destSystemID
+        });
+        const outMaster = new OptCCParams({
+          version: new BN(3, 10),
+          evalCode: new BN(EVALS.EVAL_NONE),
+          m: new BN(1, 10),
+          n: new BN(1, 10),
+          destinations: [reserveDestination]
+        });
+        const outParams = new OptCCParams({
+          version: new BN(3, 10),
+          evalCode: new BN(EVALS.EVAL_RESERVE_TRANSFER),
+          m: new BN(1, 10),
+          n: new BN(1, 10),
+          destinations: [reserveDestination],
+          vData: [reserveTransfer.toBuffer()]
+        });
+
+        txb.addOutput(
+          VerusIdInterface.createSmartTransactionOutputScript(outMaster, outParams),
+          outputNativeValue.toNumber()
+        );
+      } else {
+        const tokenValueMap = new Map(valueMap);
+
+        tokenValueMap.delete(chainId);
+
+        if (tokenValueMap.size === 0 && output.address.typeNoFlags().eq(DEST_PKH)) {
+          txb.addOutput(output.address.getAddressString(), outputNativeValue.toNumber());
+        } else {
+          const destination = VerusIdInterface.getTxDestination(output.address);
+          const outMaster = new OptCCParams({
+            version: new BN(3, 10),
+            evalCode: new BN(EVALS.EVAL_NONE),
+            m: tokenValueMap.size === 0 ? new BN(0, 10) : new BN(1, 10),
+            n: tokenValueMap.size === 0 ? new BN(0, 10) : new BN(1, 10),
+            destinations: tokenValueMap.size === 0 ? [] : [destination]
+          });
+          const outParams = tokenValueMap.size === 0 ?
+            new OptCCParams({
+              version: new BN(3, 10),
+              evalCode: new BN(EVALS.EVAL_NONE),
+              m: new BN(1, 10),
+              n: new BN(1, 10),
+              destinations: [destination]
+            }) :
+            new OptCCParams({
+              version: new BN(3, 10),
+              evalCode: new BN(EVALS.EVAL_RESERVE_OUTPUT),
+              m: new BN(1, 10),
+              n: new BN(1, 10),
+              destinations: [destination],
+              vData: [new TokenOutput({
+                values: new CurrencyValueMap({
+                  valueMap: tokenValueMap,
+                  multivalue: tokenValueMap.size > 1
+                }),
+                version: VerusIdInterface.getTokenOutputVersion(tokenValueMap)
+              }).toBuffer()]
+            });
+
+          txb.addOutput(
+            VerusIdInterface.createSmartTransactionOutputScript(outMaster, outParams),
+            outputNativeValue.toNumber()
+          );
+        }
+      }
+    }
+
+    return txb.buildIncomplete().toHex();
+  }
+
+  private static getExpectedSentFromCurrencyTransferOutputs(currencyTransferOutputs: CurrencyTransferOutput[]): Map<string, BigNumber> {
     const expectedSent = new Map<string, BigNumber>();
 
-    for (const output of sweepOutputs) {
-      const satoshis = BigNumber(output.satoshis);
+    for (const output of currencyTransferOutputs) {
+      const valueMap = VerusIdInterface.getCurrencyValueMap(output);
 
-      if (!satoshis.isFinite() || satoshis.isNegative()) {
-        throw new Error("Sweep output satoshis must be a non-negative integer string.")
-      }
+      valueMap.forEach((value, currency) => {
+        const satoshis = BigNumber(value.toString());
 
-      if (expectedSent.has(output.currency)) expectedSent.set(output.currency, expectedSent.get(output.currency)!.plus(satoshis))
-      else expectedSent.set(output.currency, satoshis)
+        if (expectedSent.has(currency)) expectedSent.set(currency, expectedSent.get(currency)!.plus(satoshis))
+        else expectedSent.set(currency, satoshis)
+      })
     }
 
     return expectedSent;
   }
 
   private static getDestinationFees(destination: TransferDestination): BigNumber {
-    let fees = BigNumber(destination.fees != null ? destination.fees.toString() : 0);
-
-    for (const auxDest of destination.auxDests || []) {
-      fees = fees.plus(VerusIdInterface.getDestinationFees(auxDest))
-    }
-
-    return fees;
+    return BigNumber(VerusIdInterface.getGatewayLegFees(destination).toString());
   }
 
-  private static getExpectedFeesFromSweepOutputs(sweepOutputs: CurrencyTransferOutput[], chainId: string): Map<string, BigNumber> {
+  private static getExpectedFeesFromCurrencyTransferOutputs(currencyTransferOutputs: CurrencyTransferOutput[], chainId: string): Map<string, BigNumber> {
     const expectedFees = new Map<string, BigNumber>();
 
-    for (const output of sweepOutputs) {
-      const isReserveTransfer = output.feecurrency != null ||
-                                output.feesatoshis != null ||
-                                output.convertto != null ||
-                                output.exportto != null ||
-                                output.via != null;
+    for (const output of currencyTransferOutputs) {
+      const isReserveTransfer = VerusIdInterface.isReserveTransferOutput(output);
 
       if (!isReserveTransfer) continue;
 
-      const feeCurrency = output.feecurrency ? output.feecurrency : chainId;
-      const outputFees = BigNumber(output.feesatoshis ? output.feesatoshis : "300000")
-        .plus(VerusIdInterface.getDestinationFees(output.address));
+      const valueCurrencies = Array.from(VerusIdInterface.getCurrencyValueMap(output).keys());
+      VerusIdInterface.validateCurrencyTransferOutput(output, chainId, isReserveTransfer);
+      const flags = VerusIdInterface.getReserveTransferFlags(output, valueCurrencies);
+      const feeCurrency = VerusIdInterface.getReserveTransferFeeCurrency(output, chainId);
+      const reserveTransferDestination = VerusIdInterface.getReserveTransferDestination(output);
+      const outputFees = BigNumber(VerusIdInterface.getReserveTransferFeeSatoshis(output, flags).toString())
+        .plus(VerusIdInterface.getDestinationFees(reserveTransferDestination));
 
       if (expectedFees.has(feeCurrency)) expectedFees.set(feeCurrency, expectedFees.get(feeCurrency)!.plus(outputFees))
       else expectedFees.set(feeCurrency, outputFees)
@@ -1038,7 +1382,7 @@ class VerusIdInterface {
     return expectedFees;
   }
 
-  private static validateSweepSent(validation: FundedCurrencyValidation, expectedSent: Map<string, BigNumber>) {
+  private static validateCurrencyTransferSent(validation: FundedCurrencyValidation, expectedSent: Map<string, BigNumber>) {
     const keys = new Set<string>([
       ...Object.keys(validation.sent ? validation.sent : {}),
       ...Array.from(expectedSent.keys())
@@ -1049,7 +1393,7 @@ class VerusIdInterface {
       const expected = expectedSent.get(key) || BigNumber(0);
 
       if (!actual.isEqualTo(expected)) {
-        throw new Error("Sent currency delta does not match explicit sweep output for " + key + ".")
+        throw new Error("Sent currency delta does not match explicit currency transfer output for " + key + ".")
       }
     })
   }
@@ -1180,8 +1524,8 @@ class VerusIdInterface {
     const baseTx = Transaction.fromHex(baseTxHex, networks.verus);
     const outputsTx = Transaction.fromHex(outputsTxHex, networks.verus);
 
-    if (baseTx.ins.length !== 0) throw new Error("Identity update transaction must be unfunded before combining sweep outputs.");
-    if (outputsTx.ins.length !== 0) throw new Error("Currency sweep transaction must be unfunded before combining.");
+    if (baseTx.ins.length !== 0) throw new Error("Identity update transaction must be unfunded before combining currency transfer outputs.");
+    if (outputsTx.ins.length !== 0) throw new Error("Currency transfer transaction must be unfunded before combining.");
 
     outputsTx.outs.forEach((output: { value: number, script: Buffer }) => {
       baseTx.outs.push(output)
@@ -1530,16 +1874,16 @@ class VerusIdInterface {
     }
   }
 
-  async createUpdateIdentityWithCurrencySweepTransaction(
+  async createUpdateIdentityWithCurrencyTransferTransaction(
     identity: Identity | IdentityUpdateRequestDetails,
     changeAddress: string,
     rawIdentityTransaction: string,
     identityTransactionHeight: number,
-    sweepOutputs: CurrencyTransferOutput[],
+    currencyTransferOutputs: CurrencyTransferOutput[],
     utxoList: GetAddressUtxosResponse["result"],
-    options: IdentityUpdateCurrencySweepOptions = {}
+    options: IdentityUpdateCurrencyTransferOptions = {}
   ): Promise<IdentityUpdateTransactionResult> {
-    if (!sweepOutputs.length) throw new Error("Must provide at least one explicit sweep output.");
+    if (!currencyTransferOutputs.length) throw new Error("Must provide at least one explicit currency transfer output.");
 
     const preparedIdentityUpdate = await this.prepareIdentityUpdateTransaction(
       identity,
@@ -1556,15 +1900,14 @@ class VerusIdInterface {
     );
 
     const chainId = options.chainIAddr != null ? options.chainIAddr : await this.getChainId();
-    const sweepTxHex = createUnfundedCurrencyTransfer(
+    const currencyTransferTxHex = VerusIdInterface.createUnfundedCurrencyTransferTransaction(
       chainId,
-      sweepOutputs,
-      networks.verus,
+      currencyTransferOutputs,
       preparedIdentityUpdate.height + 20
     );
     const combinedUnfundedTxHex = VerusIdInterface.combineUnfundedTransactions(
       preparedIdentityUpdate.unfundedTxHex,
-      sweepTxHex
+      currencyTransferTxHex
     );
 
     let fundedTxHex;
@@ -1601,11 +1944,11 @@ class VerusIdInterface {
 
     if (!validation.valid) throw new Error(validation.message);
 
-    const expectedSent = VerusIdInterface.getExpectedSentFromSweepOutputs(sweepOutputs);
-    const expectedExplicitFees = VerusIdInterface.getExpectedFeesFromSweepOutputs(sweepOutputs, chainId);
+    const expectedSent = VerusIdInterface.getExpectedSentFromCurrencyTransferOutputs(currencyTransferOutputs);
+    const expectedExplicitFees = VerusIdInterface.getExpectedFeesFromCurrencyTransferOutputs(currencyTransferOutputs, chainId);
     const deltas: Map<string, BigNumber> = new Map();
 
-    VerusIdInterface.validateSweepSent(validation, expectedSent);
+    VerusIdInterface.validateCurrencyTransferSent(validation, expectedSent);
     VerusIdInterface.validateFees(validation, expectedExplicitFees, chainId, options.maxFee == null ? 5 : options.maxFee);
     VerusIdInterface.addValidationFeesToDeltas(validation, deltas);
     VerusIdInterface.addValidationSentToDeltas(validation, deltas);

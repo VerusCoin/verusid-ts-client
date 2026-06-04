@@ -4,8 +4,9 @@ import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import BigNumber from "bignumber.js";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
 export type CurrencyTransferOutput = {
-    currency: string;
-    satoshis: string;
+    currencies: {
+        [currency: string]: string | number;
+    };
     convertto?: string;
     exportto?: string;
     feecurrency?: string;
@@ -18,10 +19,10 @@ export type CurrencyTransferOutput = {
     burnweight?: boolean;
     mintnew?: boolean;
     importtosource?: boolean;
-    bridgeid?: string;
+    destsystem?: string;
     vdxftag?: string;
 };
-export type IdentityUpdateCurrencySweepOptions = {
+export type IdentityUpdateCurrencyTransferOptions = {
     chainIAddr?: string;
     maxFee?: number;
     fundRawTransactionResult?: FundRawTransactionResponse["result"];
@@ -126,10 +127,28 @@ declare class VerusIdInterface {
     private static addValidationFeesToDeltas;
     private static addValidationSentToDeltas;
     private static validateNoUnexpectedCurrencySent;
-    private static getExpectedSentFromSweepOutputs;
+    private static getSatoshis;
+    private static getCurrencyValueMap;
+    private static isReserveTransferOutput;
+    private static getTxDestination;
+    private static getTokenOutputVersion;
+    private static createSmartTransactionOutputScript;
+    private static cloneTransferDestination;
+    private static usesRefundDestination;
+    private static getReserveTransferDestination;
+    private static validateCurrencyTransferOutput;
+    private static getReserveTransferDestinationCurrency;
+    private static getReserveTransferFlags;
+    private static calculateReserveTransferFee;
+    private static getReserveTransferFeeSatoshis;
+    private static getReserveTransferFeeCurrency;
+    private static hasGatewayLeg;
+    private static getGatewayLegFees;
+    private static createUnfundedCurrencyTransferTransaction;
+    private static getExpectedSentFromCurrencyTransferOutputs;
     private static getDestinationFees;
-    private static getExpectedFeesFromSweepOutputs;
-    private static validateSweepSent;
+    private static getExpectedFeesFromCurrencyTransferOutputs;
+    private static validateCurrencyTransferSent;
     private static validateFees;
     private static getFundingUtxosFromTransaction;
     private getVerifiedFundingUtxosFromTransaction;
@@ -141,7 +160,7 @@ declare class VerusIdInterface {
     private prepareIdentityUpdateTransaction;
     createUpdateIdentityTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, maxFee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, updateIdentityTransactionHex?: string, parseVdxfObjects?: boolean, isTestnet?: boolean, // This parameter is only necessary if you pass in an IdentityUpdateRequestDetails
     allowUnverifiedPrevouts?: boolean): Promise<IdentityUpdateTransactionResult>;
-    createUpdateIdentityWithCurrencySweepTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, sweepOutputs: CurrencyTransferOutput[], utxoList: GetAddressUtxosResponse["result"], options?: IdentityUpdateCurrencySweepOptions): Promise<IdentityUpdateTransactionResult>;
+    createUpdateIdentityWithCurrencyTransferTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, currencyTransferOutputs: CurrencyTransferOutput[], utxoList: GetAddressUtxosResponse["result"], options?: IdentityUpdateCurrencyTransferOptions): Promise<IdentityUpdateTransactionResult>;
     createRevokeIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<{
         hex: string;
         utxos: GetAddressUtxosResponse["result"];
