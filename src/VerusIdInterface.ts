@@ -1211,7 +1211,7 @@ class VerusIdInterface {
       new BN(0, 10);
   }
 
-  private static createUnfundedCurrencyTransferTransaction(
+  static createUnfundedCurrencyTransferTransaction(
     chainId: string,
     currencyTransferOutputs: CurrencyTransferOutput[],
     expiryHeight: number

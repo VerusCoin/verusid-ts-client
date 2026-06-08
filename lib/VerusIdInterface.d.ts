@@ -144,7 +144,7 @@ declare class VerusIdInterface {
     private static getReserveTransferFeeCurrency;
     private static hasGatewayLeg;
     private static getGatewayLegFees;
-    private static createUnfundedCurrencyTransferTransaction;
+    static createUnfundedCurrencyTransferTransaction(chainId: string, currencyTransferOutputs: CurrencyTransferOutput[], expiryHeight: number): string;
     private static getExpectedSentFromCurrencyTransferOutputs;
     private static getDestinationFees;
     private static getExpectedFeesFromCurrencyTransferOutputs;
