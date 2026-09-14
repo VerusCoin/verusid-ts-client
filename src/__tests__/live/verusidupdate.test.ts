@@ -680,7 +680,54 @@ describe('Creates VerusID update transactions', () => {
     expect(signedTx).toEqual(TEST_ID_5_SIGNED_TX);
   });
 
-  test('catches update identity where fundrawtx modifies data not intended to be modified', async () => {    
+  test('allows an identity update without cmm changes when the current identity has cmm entries', async () => {
+    const updatedPrimaryAddress = TEST_ID_3.identity.primaryaddresses[0];
+    const identityWithExistingCmm = Identity.fromJson({
+      ...TEST_ID_5.identity,
+      contentmultimap: {
+        [VERUSTEST_I_ADDR]: ['01']
+      }
+    });
+    const updatedIdentity = Identity.fromJson({
+      ...TEST_ID_5.identity,
+      primaryaddresses: [updatedPrimaryAddress]
+    });
+    const currentIdentityTx = smarttxs.createUnfundedIdentityUpdate(
+      identityWithExistingCmm.toBuffer().toString('hex'),
+      networks.verus,
+      18187
+    );
+    const updateIdentityTx = smarttxs.createUnfundedIdentityUpdate(
+      updatedIdentity.toBuffer().toString('hex'),
+      networks.verus,
+      18187
+    );
+    const request = IdentityUpdateRequestDetails.fromCLIJson({
+      name: TEST_ID_5.identity.name,
+      primaryaddresses: [updatedPrimaryAddress]
+    });
+
+    const result = await VerusId.createUpdateIdentityTransaction(
+      request,
+      updatedPrimaryAddress,
+      currentIdentityTx,
+      TEST_ID_5.blockheight,
+      undefined,
+      VERUSTEST_I_ADDR,
+      0.0001,
+      undefined,
+      18167,
+      updateIdentityTx,
+      true,
+      true
+    );
+
+    expect(result.hex).toEqual(updateIdentityTx);
+    expect(result.identity.toJson().primaryaddresses).toEqual([updatedPrimaryAddress]);
+    expect(result.identity.toJson().contentmultimap).toEqual({});
+  });
+
+  test('catches an identity update with a different cmm key', async () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
       TEST_ID_5_REQUEST_JSON_DIFF_KEY,
       {
@@ -750,7 +797,7 @@ describe('Creates VerusID update transactions', () => {
     expect((error as Error).message).toBe("Identity update request txid does not match the txid of the identity transaction");
   });
 
-  test('catches update identity where fundrawtx modifies data not intended to be modified', async () => {    
+  test('catches an identity update with different primary addresses', async () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
       TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS,
       {
@@ -784,7 +831,7 @@ describe('Creates VerusID update transactions', () => {
     expect(error).toBeDefined();
   });
 
-  test('catches update identity where fundrawtx modifies data not intended to be modified', async () => {    
+  test('catches an unrequested cmm update', async () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
       TEST_ID_5_REQUEST_JSON_DIFF_CMM,
       {
@@ -816,5 +863,6 @@ describe('Creates VerusID update transactions', () => {
     }
 
     expect(error).toBeDefined();
+    expect((error as Error).message).toBe("Unexpected contentmultimap entries in identity transaction");
   });
 });

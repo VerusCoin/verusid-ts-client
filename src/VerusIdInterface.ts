@@ -1698,6 +1698,15 @@ class VerusIdInterface {
       const partialIdentityJson = partialIdentity.toJson();
 
       const changedKeys = Object.keys(partialIdentityJson);
+      const contentMultiMapChanged = partialIdentity.containsContentMultiMap();
+
+      // Identity contentmultimap values are per-transaction updates that the daemon
+      // aggregates across identity history. When an update omits contentmultimap,
+      // the next identity output must contain no new entries; the previous output's
+      // entries must not be copied forward or compared as persistent state.
+      if (!contentMultiMapChanged && identityFromServer.contentMultiMap.kvContent.size > 0) {
+        throw new Error("Unexpected contentmultimap entries in identity transaction");
+      }
 
       // Compare keys that were both changed and unchanged to ensure that changes are the same in funded tx from server
       let serverChangedKeysComp: { [key: string]: any } = {};
@@ -1713,6 +1722,8 @@ class VerusIdInterface {
           fromTxUnchangedKeysComp[key] = identityFromRawTransactionJson[key];
         } else if (changedKeys.includes(key)) {
           serverChangedKeysComp[key] = serverIdentityJson[key];
+        } else if (key === 'contentmultimap' && !contentMultiMapChanged) {
+          continue;
         } else {
           serverUnchangedKeysComp[key] = serverIdentityJson[key];
           fromTxUnchangedKeysComp[key] = identityFromRawTransactionJson[key];
