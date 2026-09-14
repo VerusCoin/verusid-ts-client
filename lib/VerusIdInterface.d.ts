@@ -33,9 +33,11 @@ export type IdentityUpdateCurrencyTransferOptions = {
     expectedIdentityPrimaryAddress?: string;
     allowUnverifiedPrevouts?: boolean;
 };
+export type AddressUtxos = Extract<GetAddressUtxosResponse["result"], unknown[]>;
+export type AddressUtxo = AddressUtxos[number];
 export type IdentityUpdateTransactionResult = {
     hex: string;
-    utxos: GetAddressUtxosResponse["result"];
+    utxos: AddressUtxos;
     identity: Identity;
     deltas: Map<string, BigNumber>;
 };
@@ -80,15 +82,18 @@ declare class VerusIdInterface {
      */
     private verifyResponse;
     /**
-     * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+     * @deprecated SignedSessionObject construction is disabled in primitives.
+     * No compatible replacement HTTP session API is available.
      */
     verifySignedSessionObject(object: SignedSessionObject, getIdentityResult?: GetIdentityResponse["result"], chainIAddr?: string): Promise<boolean>;
     /**
-     * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+     * @deprecated SignedSessionObject construction is disabled in primitives.
+     * No compatible replacement HTTP session API is available.
      */
     signSessionObject(object: SignedSessionObject, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number): Promise<SignedSessionObject>;
     /**
-     * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+     * @deprecated Disabled because SignedSessionObject construction is unsupported in primitives.
+     * Always rejects; no compatible replacement HTTP session API is available.
      */
     createSignedSessionObject(signingId: string, data: SignedSessionObjectData, primaryAddrWif?: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string): Promise<SignedSessionObject>;
     /**
@@ -161,18 +166,8 @@ declare class VerusIdInterface {
     createUpdateIdentityTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, maxFee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, updateIdentityTransactionHex?: string, parseVdxfObjects?: boolean, isTestnet?: boolean, // This parameter is only necessary if you pass in an IdentityUpdateRequestDetails
     allowUnverifiedPrevouts?: boolean): Promise<IdentityUpdateTransactionResult>;
     createUpdateIdentityWithCurrencyTransferTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, currencyTransferOutputs: CurrencyTransferOutput[], utxoList: GetAddressUtxosResponse["result"], options?: IdentityUpdateCurrencyTransferOptions): Promise<IdentityUpdateTransactionResult>;
-    createRevokeIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<{
-        hex: string;
-        utxos: GetAddressUtxosResponse["result"];
-        identity: Identity;
-        deltas: Map<string, BigNumber>;
-    }>;
-    createRecoverIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<{
-        hex: string;
-        utxos: GetAddressUtxosResponse["result"];
-        identity: Identity;
-        deltas: Map<string, BigNumber>;
-    }>;
+    createRevokeIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<IdentityUpdateTransactionResult>;
+    createRecoverIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<IdentityUpdateTransactionResult>;
     /**
      *
      * @param unsignedTxHex The unsigned transaction hex

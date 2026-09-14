@@ -14,7 +14,7 @@
     "preversion": "npm run lint",
     "version": "npm run format && git add -A src",
     "postversion": "git push && git push --tags",
-    "update-verus-libs": "yarn remove verus-typescript-primitives && yarn add git+https://github.com/VerusCoin/verus-typescript-primitives.git && yarn remove verusd-rpc-ts-client && yarn add git+https://github.com/VerusCoin/verusd-rpc-ts-client && yarn remove @bitgo/utxo-lib && yarn add git+https://github.com/VerusCoin/BitGoJS.git#utxo-lib-verus"
+    "update-verus-libs": "node scripts/update-verus-libs.js"
   },
   "repository": {
     "type": "git",
@@ -33,6 +33,7 @@
   "devDependencies": {
     "@types/bn.js": "5.1.5",
     "@types/jest": "30.0",
+    "@types/node": "24.1.0",
     "@typescript-eslint/eslint-plugin": "5.30.7",
     "@typescript-eslint/parser": "5.30.7",
     "eslint": "8.20.0",
@@ -46,14 +47,15 @@
     "lib/**/*"
   ],
   "dependencies": {
-    "@bitgo/utxo-lib": "git+https://github.com/VerusCoin/BitGoJS.git#utxo-lib-verus",
+    "@bitgo/utxo-lib": "git+https://github.com/VerusCoin/BitGoJS.git#9582a20f7211a7a6aed7bfae3c651e6b76c1f9bb",
     "axios": "1.13.5",
     "bignumber.js": "9.1.0",
     "bn.js": "5.2.3",
-    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git",
-    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client"
+    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#7a7b01db697222cd68507a9dbf15f289615ea890",
+    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client#58689ea52500a6a6e4aa741e5d2ed41d7bc6ddd7"
   },
   "resolutions": {
+    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#7a7b01db697222cd68507a9dbf15f289615ea890",
     "sha.js": "2.4.12",
     "minimatch": "3.1.4",
     "glob": "10.5.0",

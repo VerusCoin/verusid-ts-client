@@ -12,7 +12,7 @@ import { VerifiableSignatureData } from 'verus-typescript-primitives/dist/vdxf/c
 import { TEST_CREATED_AT, TEST_SALT, TEST_SAPLING_ADDR, TEST_UNSIGNED_VERIFIABLE_SIG_DATA } from '../fixtures/genericenvelope';
 import { TEST_ID_UPDATE_REQUEST_DETAILS, TEST_ID_UPDATE_RESPONSE_DETAILS } from '../fixtures/identityupdate';
 
-describe('Creates and identity update requests', () => {
+describe('Creates and verifies identity update envelopes', () => {
   const VerusId = new VerusIdInterface("VRSCTEST", "127.0.0.1");
 
   async function testGenericRequest(details: Array<OrdinalVDXFObject>) {
@@ -90,10 +90,10 @@ describe('Creates and identity update requests', () => {
   }
 
   test('can sign and verify basic identity update request', async () => {
-    testGenericResponse([new IdentityUpdateRequestOrdinalVDXFObject({ data: TEST_ID_UPDATE_REQUEST_DETAILS })]);
+    await testGenericRequest([new IdentityUpdateRequestOrdinalVDXFObject({ data: TEST_ID_UPDATE_REQUEST_DETAILS })]);
   });
 
   test('can sign and verify basic identity update response', async () => {
-    testGenericRequest([new IdentityUpdateResponseOrdinalVDXFObject({ data: TEST_ID_UPDATE_RESPONSE_DETAILS })]);
+    await testGenericResponse([new IdentityUpdateResponseOrdinalVDXFObject({ data: TEST_ID_UPDATE_RESPONSE_DETAILS })]);
   });
 });

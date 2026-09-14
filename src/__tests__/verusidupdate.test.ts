@@ -1,12 +1,43 @@
 import { DEST_PKH, fromBase58Check, Identity, IdentityUpdateRequestDetails, ReserveTransfer, TransferDestination } from 'verus-typescript-primitives';
-import { VerusIdInterface } from '../../index'
-import { TEST_UTXOS, TEST_ID_2, TEST_ID_2_RAW_TX, VERUSTEST_I_ADDR, TEST_ID_2_FUNDED_UPDATE, TEST_ID_2_UPDATE_NO_CHANGE, TEST_ID_3, TEST_UTXOS_TEST_ID_3, TEST_ID_3_FUNDRAWTX_RES, TEST_ID_3_RAW_TX, TEST_ID_3_RECOVERY_REVOKE_WIF, TEST_ID_3_SIGNED_TX, TEST_UTXOS_REVOKE_TEST_ID_3, TEST_ID_3_REVOKE_FUNDRAWTX_RES, TEST_ID_3_REVOKE, TEST_ID_3_REVOKE_RAW_TX, TEST_ID_3_REVOKE_SIGNED_TX, TEST_ID_3_RECOVER, TEST_ID_3_RECOVER_RAW_TX, TEST_UTXOS_RECOVER_TEST_ID_3, TEST_ID_3_RECOVER_FUNDRAWTX_RES, TEST_ID_3_RECOVER_SIGNED_TX, TEST_ID_4_RECOVER, TEST_ID_4_RECOVER_RAW_TX, TEST_UTXOS_RECOVER_TEST_ID_4, TEST_ID_4_RECOVERY_REVOKE_WIF, TEST_ID_4_RECOVER_FUNDRAWTX_RES, TEST_ID_4_RECOVER_SIGNED_TX, TEST_ID_4_RECOVERY_CHANGE_WIF, TEST_ID_5, TEST_ID_5_RAW_TRANSACTION, TEST_ID_5_UTXOS, TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX, TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX, TEST_ID_5_SIGNER_WIF, TEST_ID_5_SIGNED_TX, TEST_ID_5_REQUEST_JSON, TEST_ID_5_REQUEST_JSON_DIFF_KEY, TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS, TEST_ID_5_REQUEST_JSON_DIFF_CMM, TEST_ID_3_UNFUNDED_HEX } from '../fixtures/verusid';
+import { VerusIdInterface } from '../index'
+import { TEST_UTXOS, TEST_ID_2, TEST_ID_2_RAW_TX, VERUSTEST_I_ADDR, TEST_ID_2_FUNDED_UPDATE, TEST_ID_2_UPDATE_NO_CHANGE, TEST_ID_3, TEST_UTXOS_TEST_ID_3, TEST_ID_3_FUNDRAWTX_RES, TEST_ID_3_RAW_TX, TEST_ID_3_RECOVERY_REVOKE_WIF, TEST_ID_3_SIGNED_TX, TEST_UTXOS_REVOKE_TEST_ID_3, TEST_ID_3_REVOKE_FUNDRAWTX_RES, TEST_ID_3_REVOKE, TEST_ID_3_REVOKE_RAW_TX, TEST_ID_3_REVOKE_SIGNED_TX, TEST_ID_3_RECOVER, TEST_ID_3_RECOVER_RAW_TX, TEST_UTXOS_RECOVER_TEST_ID_3, TEST_ID_3_RECOVER_FUNDRAWTX_RES, TEST_ID_3_RECOVER_SIGNED_TX, TEST_ID_4_RECOVER, TEST_ID_4_RECOVER_RAW_TX, TEST_UTXOS_RECOVER_TEST_ID_4, TEST_ID_4_RECOVERY_REVOKE_WIF, TEST_ID_4_RECOVER_FUNDRAWTX_RES, TEST_ID_4_RECOVER_SIGNED_TX, TEST_ID_4_RECOVERY_CHANGE_WIF, TEST_ID_5, TEST_ID_5_RAW_TRANSACTION, TEST_ID_5_UTXOS, TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX, TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX, TEST_ID_5_SIGNER_WIF, TEST_ID_5_SIGNED_TX, TEST_ID_5_REQUEST_JSON, TEST_ID_5_REQUEST_JSON_DIFF_KEY, TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS, TEST_ID_5_REQUEST_JSON_DIFF_CMM, TEST_ID_3_UNFUNDED_HEX } from './fixtures/verusid';
 import { networks, smarttxs, Transaction, TransactionBuilder } from '@bitgo/utxo-lib';
 import { BN } from 'bn.js';
-import { TEST_REQUEST_ID } from '../fixtures/genericenvelope';
+import { TEST_REQUEST_ID } from './fixtures/genericenvelope';
+import { GetAddressUtxosResponse } from 'verus-typescript-primitives';
+import { AddressUtxos, IdentityUpdateTransactionResult } from '../VerusIdInterface';
+
+const withChainInfo = (utxos: AddressUtxos): GetAddressUtxosResponse['result'] => ({
+  utxos,
+  hash: 'ab'.repeat(32),
+  height: 31677
+});
+
+const UTXO_SHAPES: [string, (utxos: AddressUtxos) => GetAddressUtxosResponse['result']][] = [
+  ['array', utxos => utxos],
+  ['chain-info object', withChainInfo]
+];
+
+const expectSelectedInputOrder = (result: IdentityUpdateTransactionResult) => {
+  const transaction = Transaction.fromHex(result.hex, networks.verus);
+
+  expect(Array.isArray(result.utxos)).toBe(true);
+  expect(result.utxos.map(utxo => [utxo.txid, utxo.outputIndex])).toEqual(
+    transaction.ins.map((input: { hash: Buffer, index: number }) => [
+      Buffer.from(input.hash).reverse().toString('hex'),
+      input.index
+    ])
+  );
+  expect(result.utxos[result.utxos.length - 1].isspendable).toBe(false);
+};
 
 describe('Creates VerusID update transactions', () => {
-  const VerusId = new VerusIdInterface(VERUSTEST_I_ADDR, "http://localhost")
+  const VerusId = new VerusIdInterface(
+    VERUSTEST_I_ADDR,
+    "http://localhost",
+    undefined,
+    async req => { throw new Error('Unexpected RPC request: ' + req.method); }
+  );
   const TRANSFER_SATOSHIS = "100000";
   const RESERVE_TRANSFER_FEE_SATOSHIS = "20000";
   const ALLOW_UNVERIFIED_PREVOUTS = true;
@@ -191,13 +222,13 @@ describe('Creates VerusID update transactions', () => {
     expect(res.hex).toEqual(TEST_ID_2_UPDATE_NO_CHANGE);
   });
 
-  test('can create and sign basic identity update tx', async () => {
+  test.each(UTXO_SHAPES)('can create and sign basic identity update tx with %s', async (_shape, toUtxoResponse) => {
     const res = await VerusId.createUpdateIdentityTransaction(
       Identity.fromJson(TEST_ID_3.identity),
       TEST_ID_3.identity.primaryaddresses[0],
       TEST_ID_3_RAW_TX,
       TEST_ID_3.blockheight,
-      TEST_UTXOS_TEST_ID_3,
+      toUtxoResponse(TEST_UTXOS_TEST_ID_3),
       VERUSTEST_I_ADDR,
       0.0001,
       TEST_ID_3_FUNDRAWTX_RES,
@@ -208,12 +239,15 @@ describe('Creates VerusID update transactions', () => {
       ALLOW_UNVERIFIED_PREVOUTS
     );
 
-    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, res.utxos, [[TEST_ID_3_RECOVERY_REVOKE_WIF], [TEST_ID_3_RECOVERY_REVOKE_WIF]]);
+    expectSelectedInputOrder(res);
+    expect(res.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe("-10000");
+
+    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, toUtxoResponse(res.utxos), [[TEST_ID_3_RECOVERY_REVOKE_WIF], [TEST_ID_3_RECOVERY_REVOKE_WIF]]);
 
     expect(signedTx).toEqual(TEST_ID_3_SIGNED_TX);
   });
 
-  test('verifies prevout amounts and scripts from raw transactions before fee validation', async () => {
+  test.each(UTXO_SHAPES)('verifies prevout amounts and scripts from raw transactions before fee validation with %s', async (_shape, toUtxoResponse) => {
     const { fundRawTransactionResult, prevTx, untrustedUtxos, verusId } = createVerifiedPrevoutFixture();
 
     const res = await verusId.createUpdateIdentityTransaction(
@@ -221,7 +255,7 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_3.identity.primaryaddresses[0],
       TEST_ID_3_RAW_TX,
       TEST_ID_3.blockheight,
-      untrustedUtxos,
+      toUtxoResponse(untrustedUtxos),
       VERUSTEST_I_ADDR,
       0.0001,
       fundRawTransactionResult,
@@ -234,7 +268,7 @@ describe('Creates VerusID update transactions', () => {
     expect(res.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe("-10000");
   });
 
-  test('rejects verified prevout raw transactions with mismatched hashes', async () => {
+  test.each(UTXO_SHAPES)('rejects verified prevout raw transactions with mismatched hashes with %s', async (_shape, toUtxoResponse) => {
     const { fundRawTransactionResult, prevTx, untrustedUtxos } = createVerifiedPrevoutFixture();
     const wrongPrevTxBuilder = new TransactionBuilder(networks.verus);
 
@@ -261,12 +295,32 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_3.identity.primaryaddresses[0],
       TEST_ID_3_RAW_TX,
       TEST_ID_3.blockheight,
-      untrustedUtxos,
+      toUtxoResponse(untrustedUtxos),
       VERUSTEST_I_ADDR,
       0.0001,
       fundRawTransactionResult,
       31677
     )).rejects.toThrow("Prevout transaction hash mismatch for " + prevTx.getId() + ".");
+  });
+
+  test.each(UTXO_SHAPES)('rejects a missing prevout output with %s', async (_shape, toUtxoResponse) => {
+    const { fundRawTransactionResult, prevTx, untrustedUtxos, verusId } = createVerifiedPrevoutFixture();
+    const fundedTx = Transaction.fromHex(fundRawTransactionResult.hex, networks.verus);
+
+    fundedTx.ins[0].index = 1;
+    const utxos = untrustedUtxos.map(utxo => ({ ...utxo, outputIndex: 1 }));
+
+    await expect(verusId.createUpdateIdentityTransaction(
+      Identity.fromJson(TEST_ID_3.identity),
+      TEST_ID_3.identity.primaryaddresses[0],
+      TEST_ID_3_RAW_TX,
+      TEST_ID_3.blockheight,
+      toUtxoResponse(utxos),
+      VERUSTEST_I_ADDR,
+      0.0001,
+      { ...fundRawTransactionResult, hex: fundedTx.toHex() },
+      31677
+    )).rejects.toThrow('Prevout ' + prevTx.getId() + ' index 1 not found.');
   });
 
   test('catches identity update when funded identity destination is modified', async () => {
@@ -296,14 +350,14 @@ describe('Creates VerusID update transactions', () => {
     expect((error as Error).message).toBe("Transaction hex does not match unfunded component.");
   });
 
-  test('can create combined identity update and explicit currency transfer tx', async () => {
+  test.each(UTXO_SHAPES)('can create combined identity update and explicit currency transfer tx with %s', async (_shape, toUtxoResponse) => {
     const res = await VerusId.createUpdateIdentityWithCurrencyTransferTransaction(
       Identity.fromJson(TEST_ID_3.identity),
       TEST_ID_3.identity.primaryaddresses[0],
       TEST_ID_3_RAW_TX,
       TEST_ID_3.blockheight,
       [createCurrencyTransferOutput(TEST_ID_3.identity.primaryaddresses[0])],
-      TEST_UTXOS_TEST_ID_3,
+      toUtxoResponse(TEST_UTXOS_TEST_ID_3),
       {
         chainIAddr: VERUSTEST_I_ADDR,
         maxFee: 0.0001,
@@ -313,6 +367,7 @@ describe('Creates VerusID update transactions', () => {
       }
     );
 
+    expectSelectedInputOrder(res);
     const completedTx = Transaction.fromHex(res.hex, networks.verus);
 
     expect(completedTx.ins.length).toBe(2);
@@ -320,9 +375,15 @@ describe('Creates VerusID update transactions', () => {
     expect(completedTx.outs[2].script.toString('hex')).toMatch(/^76a914[0-9a-f]{40}88ac$/);
     expect(res.utxos.length).toBe(2);
     expect(res.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe("-110000");
+
+    const keys = [[TEST_ID_3_RECOVERY_REVOKE_WIF], [TEST_ID_3_RECOVERY_REVOKE_WIF]];
+    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, res.utxos, keys);
+
+    expect(VerusId.signUpdateIdentityTransaction(res.hex, withChainInfo(res.utxos), keys)).toBe(signedTx);
+    expect(signedTx).not.toBe(res.hex);
   });
 
-  test('can create combined identity update and explicit multi-currency reserve transfer tx', async () => {
+  test.each(UTXO_SHAPES)('can create combined identity update and explicit multi-currency reserve transfer tx with %s', async (_shape, toUtxoResponse) => {
     const nativeUtxo = TEST_UTXOS_TEST_ID_3[TEST_UTXOS_TEST_ID_3.length - 1];
     const tokenUtxo = TEST_UTXOS_TEST_ID_3[2];
     const tokenInfo = smarttxs.unpackOutput(
@@ -394,7 +455,7 @@ describe('Creates VerusID update transactions', () => {
           destinationBytes: fromBase58Check(TEST_ID_3.identity.primaryaddresses[0]).hash
         })
       }],
-      [nativeUtxo, tokenUtxo],
+      toUtxoResponse([nativeUtxo, tokenUtxo]),
       {
         chainIAddr: VERUSTEST_I_ADDR,
         maxFee: 0.01,
@@ -402,6 +463,7 @@ describe('Creates VerusID update transactions', () => {
         allowUnverifiedPrevouts: ALLOW_UNVERIFIED_PREVOUTS
       }
     );
+    expectSelectedInputOrder(res);
     const completedTx = Transaction.fromHex(res.hex, networks.verus);
     const currencyTransferOutputInfo = smarttxs.unpackOutput(completedTx.outs[1], VERUSTEST_I_ADDR, false, true);
     const reserveTransfer = currencyTransferOutputInfo.params![0].data as ReserveTransfer;
@@ -559,6 +621,93 @@ describe('Creates VerusID update transactions', () => {
     expect((error as Error).message).toBe("Transaction hex does not match unfunded component.");
   });
 
+  test.each(UTXO_SHAPES)('funds an update using explicit inputs from %s', async (_shape, toUtxoResponse) => {
+    const fundingRequests: unknown[] = [];
+    const verusId = new VerusIdInterface(
+      VERUSTEST_I_ADDR,
+      'http://localhost',
+      undefined,
+      async (req): Promise<any> => {
+        if (req.method !== 'fundrawtransaction') throw new Error('Unexpected RPC request: ' + req.method);
+        fundingRequests.push(req.params);
+        return { id: req.id, result: TEST_ID_3_FUNDRAWTX_RES, error: null };
+      }
+    );
+    const utxos = [TEST_UTXOS_TEST_ID_3[TEST_UTXOS_TEST_ID_3.length - 1]];
+    const result = await verusId.createUpdateIdentityTransaction(
+      Identity.fromJson(TEST_ID_3.identity),
+      TEST_ID_3.identity.primaryaddresses[0],
+      TEST_ID_3_RAW_TX,
+      TEST_ID_3.blockheight,
+      toUtxoResponse(utxos),
+      VERUSTEST_I_ADDR,
+      0.0001,
+      undefined,
+      31677,
+      undefined,
+      true,
+      false,
+      ALLOW_UNVERIFIED_PREVOUTS
+    );
+
+    expect(fundingRequests).toEqual([[
+      TEST_ID_3_UNFUNDED_HEX,
+      utxos.map(utxo => ({ txid: utxo.txid, voutnum: utxo.outputIndex })),
+      TEST_ID_3.identity.primaryaddresses[0]
+    ]]);
+    expectSelectedInputOrder(result);
+    expect(result.utxos[0]).toEqual(utxos[0]);
+    expect(result.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe('-10000');
+  });
+
+  test.each(UTXO_SHAPES)('keeps empty %s on the funded path', async (_shape, toUtxoResponse) => {
+    const fundingRequests: unknown[] = [];
+    const verusId = new VerusIdInterface(
+      VERUSTEST_I_ADDR,
+      'http://localhost',
+      undefined,
+      async (req): Promise<any> => {
+        if (req.method !== 'fundrawtransaction') throw new Error('Unexpected RPC request: ' + req.method);
+        fundingRequests.push(req.params);
+        return { id: req.id, result: TEST_ID_3_FUNDRAWTX_RES, error: null };
+      }
+    );
+
+    await expect(verusId.createUpdateIdentityTransaction(
+      Identity.fromJson(TEST_ID_3.identity),
+      TEST_ID_3.identity.primaryaddresses[0],
+      TEST_ID_3_RAW_TX,
+      TEST_ID_3.blockheight,
+      toUtxoResponse([]),
+      VERUSTEST_I_ADDR,
+      0.0001,
+      undefined,
+      31677
+    )).rejects.toThrow('Input not found in UTXO list');
+
+    expect(fundingRequests).toEqual([[
+      TEST_ID_3_UNFUNDED_HEX,
+      [],
+      TEST_ID_3.identity.primaryaddresses[0]
+    ]]);
+  });
+
+  test.each(UTXO_SHAPES)('rejects empty %s for a funded currency transfer', async (_shape, toUtxoResponse) => {
+    await expect(VerusId.createUpdateIdentityWithCurrencyTransferTransaction(
+      Identity.fromJson(TEST_ID_3.identity),
+      TEST_ID_3.identity.primaryaddresses[0],
+      TEST_ID_3_RAW_TX,
+      TEST_ID_3.blockheight,
+      [createCurrencyTransferOutput(TEST_ID_3.identity.primaryaddresses[0])],
+      toUtxoResponse([]),
+      {
+        chainIAddr: VERUSTEST_I_ADDR,
+        fundRawTransactionResult: createFundedIdentityCurrencyTransferResult(),
+        currentHeight: 31677
+      }
+    )).rejects.toThrow('Input not found in UTXO list');
+  });
+
   test('can create basic identity update tx without utxo list', async () => {
     const res = await VerusId.createUpdateIdentityTransaction(
       Identity.fromJson(TEST_ID_3.identity),
@@ -573,9 +722,11 @@ describe('Creates VerusID update transactions', () => {
     );
 
     expect(res.hex).toEqual(TEST_ID_3_UNFUNDED_HEX);
+    expect(res.utxos).toEqual([]);
+    expect(res.deltas.size).toBe(0);
   });
 
-  test('can create and sign basic revoke identity tx', async () => {
+  test.each(UTXO_SHAPES)('can create and sign basic revoke identity tx with %s', async (_shape, toUtxoResponse) => {
     const identity = Identity.fromJson(TEST_ID_3_REVOKE.identity);
     
     const res = await VerusId.createRevokeIdentityTransaction(
@@ -583,7 +734,7 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_3_REVOKE.identity.primaryaddresses[0],
       TEST_ID_3_REVOKE_RAW_TX,
       TEST_ID_3_REVOKE.blockheight,
-      TEST_UTXOS_REVOKE_TEST_ID_3,
+      toUtxoResponse(TEST_UTXOS_REVOKE_TEST_ID_3),
       VERUSTEST_I_ADDR,
       0.0001,
       TEST_ID_3_REVOKE_FUNDRAWTX_RES,
@@ -591,12 +742,15 @@ describe('Creates VerusID update transactions', () => {
       ALLOW_UNVERIFIED_PREVOUTS
     );
 
-    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, res.utxos, [[TEST_ID_3_RECOVERY_REVOKE_WIF], [TEST_ID_3_RECOVERY_REVOKE_WIF]]);
+    expectSelectedInputOrder(res);
+    expect(res.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe("-10000");
+
+    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, toUtxoResponse(res.utxos), [[TEST_ID_3_RECOVERY_REVOKE_WIF], [TEST_ID_3_RECOVERY_REVOKE_WIF]]);
 
     expect(signedTx).toEqual(TEST_ID_3_REVOKE_SIGNED_TX);
   });
 
-  test('can create and sign basic recover identity tx', async () => {
+  test.each(UTXO_SHAPES)('can create and sign basic recover identity tx with %s', async (_shape, toUtxoResponse) => {
     const identity = Identity.fromJson(TEST_ID_3_RECOVER.identity);
     
     const res = await VerusId.createRecoverIdentityTransaction(
@@ -604,7 +758,7 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_3_RECOVER.identity.primaryaddresses[0],
       TEST_ID_3_RECOVER_RAW_TX,
       TEST_ID_3_RECOVER.blockheight,
-      TEST_UTXOS_RECOVER_TEST_ID_3,
+      toUtxoResponse(TEST_UTXOS_RECOVER_TEST_ID_3),
       VERUSTEST_I_ADDR,
       0.0001,
       TEST_ID_3_RECOVER_FUNDRAWTX_RES,
@@ -612,7 +766,10 @@ describe('Creates VerusID update transactions', () => {
       ALLOW_UNVERIFIED_PREVOUTS
     );
 
-    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, res.utxos, [[TEST_ID_3_RECOVERY_REVOKE_WIF], [TEST_ID_3_RECOVERY_REVOKE_WIF]]);
+    expectSelectedInputOrder(res);
+    expect(res.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe("-10000");
+
+    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, toUtxoResponse(res.utxos), [[TEST_ID_3_RECOVERY_REVOKE_WIF], [TEST_ID_3_RECOVERY_REVOKE_WIF]]);
 
     expect(signedTx).toEqual(TEST_ID_3_RECOVER_SIGNED_TX);
   });

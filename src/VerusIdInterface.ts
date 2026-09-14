@@ -121,9 +121,16 @@ export type IdentityUpdateCurrencyTransferOptions = {
   allowUnverifiedPrevouts?: boolean;
 }
 
+export type AddressUtxos = Extract<GetAddressUtxosResponse["result"], unknown[]>;
+export type AddressUtxo = AddressUtxos[number];
+
+function getUtxos(result: GetAddressUtxosResponse["result"]): AddressUtxos {
+  return Array.isArray(result) ? result : result.utxos;
+}
+
 export type IdentityUpdateTransactionResult = {
   hex: string;
-  utxos: GetAddressUtxosResponse["result"];
+  utxos: AddressUtxos;
   identity: Identity;
   deltas: Map<string, BigNumber>;
 }
@@ -610,7 +617,8 @@ class VerusIdInterface {
   }
 
   /**
-   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   * @deprecated SignedSessionObject construction is disabled in primitives.
+   * No compatible replacement HTTP session API is available.
    */
   async verifySignedSessionObject(
     object: SignedSessionObject,
@@ -633,7 +641,8 @@ class VerusIdInterface {
   }
 
   /**
-   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   * @deprecated SignedSessionObject construction is disabled in primitives.
+   * No compatible replacement HTTP session API is available.
    */
   async signSessionObject(
     object: SignedSessionObject,
@@ -665,7 +674,8 @@ class VerusIdInterface {
   }
 
   /**
-   * @deprecated Legacy VerusID login, use GenericRequest class with login objects in details array
+   * @deprecated Disabled because SignedSessionObject construction is unsupported in primitives.
+   * Always rejects; no compatible replacement HTTP session API is available.
    */
   async createSignedSessionObject(
     signingId: string,
@@ -675,25 +685,7 @@ class VerusIdInterface {
     currentHeight?: number,
     chainIAddr?: string
   ): Promise<SignedSessionObject> {
-    let chainId: string;
-
-    if (chainIAddr != null) chainId = chainIAddr;
-    else chainId = await this.getChainId();
-
-    const object = new SignedSessionObject({
-      signing_id: signingId,
-      data,
-      system_id: chainId
-    })
-
-    if (primaryAddrWif) {
-      return this.signSessionObject(
-        object,
-        primaryAddrWif,
-        getIdentityResult,
-        currentHeight
-      );
-    } else return object;
+    throw new Error("SignedSessionObject is deprecated and disabled; no compatible replacement HTTP session API is available.");
   }
 
   /**
@@ -1436,10 +1428,10 @@ class VerusIdInterface {
 
   private static getFundingUtxosFromTransaction(
     fundedTxHex: string,
-    utxoList: GetAddressUtxosResponse["result"]
-  ): GetAddressUtxosResponse["result"] {
+    utxoList: AddressUtxos
+  ): AddressUtxos {
     const fundedTx = Transaction.fromHex(fundedTxHex, networks.verus);
-    const utxosUsed: GetAddressUtxosResponse["result"] = [];
+    const utxosUsed: AddressUtxos = [];
 
     fundedTx.ins.forEach((input: {
       hash: Buffer,
@@ -1464,14 +1456,14 @@ class VerusIdInterface {
 
   private async getVerifiedFundingUtxosFromTransaction(
     fundedTxHex: string,
-    utxoList: GetAddressUtxosResponse["result"],
+    utxoList: AddressUtxos,
     allowUnverifiedPrevouts: boolean = false
-  ): Promise<GetAddressUtxosResponse["result"]> {
+  ): Promise<AddressUtxos> {
     if (allowUnverifiedPrevouts) return VerusIdInterface.getFundingUtxosFromTransaction(fundedTxHex, utxoList);
 
     const fundedTx = Transaction.fromHex(fundedTxHex, networks.verus);
     const txCache: Map<string, typeof Transaction> = new Map();
-    const utxosUsed: GetAddressUtxosResponse["result"] = [];
+    const utxosUsed: AddressUtxos = [];
 
     for (const input of fundedTx.ins as Array<{
       hash: Buffer,
@@ -1576,7 +1568,7 @@ class VerusIdInterface {
 
   private static completeIdentityUpdateTransaction(
     fundedTxHex: string,
-    utxoList: GetAddressUtxosResponse["result"],
+    utxoList: AddressUtxos,
     identityTransaction: typeof Transaction,
     identityVout: number
   ): string {
@@ -1607,7 +1599,7 @@ class VerusIdInterface {
     identityTransaction: typeof Transaction,
     identityVout: number,
     identityTransactionHeight: number
-  ): GetAddressUtxosResponse["result"][number] {
+  ): AddressUtxo {
     return {
       address: identityAddress,
       txid: identityTransaction.getId(),
@@ -1615,7 +1607,7 @@ class VerusIdInterface {
       script: identityTransaction.outs[identityVout].script.toString('hex'),
       satoshis: 0,
       height: identityTransactionHeight,
-      isspendable: 0,
+      isspendable: false,
       blocktime: 0 // Filled in to avoid getblock call because blocktime is not currently checked for the ID definition utxo
     }
   }
@@ -1802,6 +1794,7 @@ class VerusIdInterface {
     isTestnet = false, // This parameter is only necessary if you pass in an IdentityUpdateRequestDetails
     allowUnverifiedPrevouts: boolean = false
   ): Promise<IdentityUpdateTransactionResult> {
+    const utxos = utxoList == null ? undefined : getUtxos(utxoList);
     const preparedIdentityUpdate = await this.prepareIdentityUpdateTransaction(
       identity,
       rawIdentityTransaction,
@@ -1813,12 +1806,12 @@ class VerusIdInterface {
 
     let fundedTxHex;
 
-    if (utxoList == null) {
+    if (utxos == null) {
       fundedTxHex = preparedIdentityUpdate.unfundedTxHex;
     } else if (fundRawTransactionResult == null) {
       const _fundRawTxRes = await this.interface.fundRawTransaction(
         preparedIdentityUpdate.unfundedTxHex,
-        utxoList.map(utxo => {
+        utxos.map(utxo => {
           return {
             voutnum: utxo.outputIndex,
             txid: utxo.txid,
@@ -1834,10 +1827,10 @@ class VerusIdInterface {
     const chainId = chainIAddr != null ? chainIAddr : await this.getChainId();
     const deltas: Map<string, BigNumber> = new Map();
 
-    if (utxoList) {
+    if (utxos) {
       const verifiedFundingUtxos = await this.getVerifiedFundingUtxosFromTransaction(
         fundedTxHex,
-        utxoList,
+        utxos,
         allowUnverifiedPrevouts
       );
       const validation: FundedCurrencyValidation = validateFundedCurrencyTransfer(
@@ -1894,6 +1887,7 @@ class VerusIdInterface {
     utxoList: GetAddressUtxosResponse["result"],
     options: IdentityUpdateCurrencyTransferOptions = {}
   ): Promise<IdentityUpdateTransactionResult> {
+    const utxos = getUtxos(utxoList);
     if (!currencyTransferOutputs.length) throw new Error("Must provide at least one explicit currency transfer output.");
 
     const preparedIdentityUpdate = await this.prepareIdentityUpdateTransaction(
@@ -1926,7 +1920,7 @@ class VerusIdInterface {
     if (options.fundRawTransactionResult == null) {
       const _fundRawTxRes = await this.interface.fundRawTransaction(
         combinedUnfundedTxHex,
-        utxoList.map(utxo => {
+        utxos.map(utxo => {
           return {
             voutnum: utxo.outputIndex,
             txid: utxo.txid,
@@ -1941,7 +1935,7 @@ class VerusIdInterface {
 
     const verifiedFundingUtxos = await this.getVerifiedFundingUtxosFromTransaction(
       fundedTxHex,
-      utxoList,
+      utxos,
       options.allowUnverifiedPrevouts == null ? false : options.allowUnverifiedPrevouts
     );
     const validation: FundedCurrencyValidation = validateFundedCurrencyTransfer(
@@ -1997,7 +1991,7 @@ class VerusIdInterface {
     fundRawTransactionResult?: FundRawTransactionResponse["result"],
     currentHeight?: number,
     allowUnverifiedPrevouts: boolean = false
-  ): Promise<{ hex: string;  utxos: GetAddressUtxosResponse["result"]; identity: Identity; deltas: Map<string, BigNumber>; }> {
+  ): Promise<IdentityUpdateTransactionResult> {
     const identity = new Identity();
     identity.fromBuffer(_identity.toBuffer());
 
@@ -2032,7 +2026,7 @@ class VerusIdInterface {
     fundRawTransactionResult?: FundRawTransactionResponse["result"],
     currentHeight?: number,
     allowUnverifiedPrevouts: boolean = false
-  ): Promise<{ hex: string; utxos: GetAddressUtxosResponse["result"]; identity: Identity; deltas: Map<string, BigNumber>; }> {
+  ): Promise<IdentityUpdateTransactionResult> {
     const identity = new Identity();
     identity.fromBuffer(_identity.toBuffer());
 
@@ -2066,18 +2060,19 @@ class VerusIdInterface {
     unsignedTxHex: string,
     inputs: GetAddressUtxosResponse["result"],
     keys: string[][]
-  ): string {    
-    const txb = smarttxs.getFundedTxBuilder(unsignedTxHex, networks.verus, inputs.map(x => Buffer.from(x.script, 'hex')));
+  ): string {
+    const utxos = getUtxos(inputs);
+    const txb = smarttxs.getFundedTxBuilder(unsignedTxHex, networks.verus, utxos.map(x => Buffer.from(x.script, 'hex')));
 
     for (let i = 0; i < keys.length; i++) {
-      if (inputs[i] && keys[i] && Array.isArray(keys[i]) && keys[i].length > 0) {
+      if (utxos[i] && keys[i] && Array.isArray(keys[i]) && keys[i].length > 0) {
         const keysForInput = keys[i];
 
         for (let j = 0; j < keysForInput.length; j++) {
           if (keysForInput[j]) {
             const keyPair = ECPair.fromWIF(keysForInput[j], networks.verus);
 
-            txb.sign(i, keyPair, null, Transaction.SIGHASH_ALL, inputs[i].satoshis);
+            txb.sign(i, keyPair, null, Transaction.SIGHASH_ALL, utxos[i].satoshis);
           }
         }
       }
