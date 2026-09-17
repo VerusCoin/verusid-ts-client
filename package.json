@@ -47,15 +47,15 @@
     "lib/**/*"
   ],
   "dependencies": {
-    "@bitgo/utxo-lib": "git+https://github.com/VerusCoin/BitGoJS.git#9582a20f7211a7a6aed7bfae3c651e6b76c1f9bb",
+    "@bitgo/utxo-lib": "git+https://github.com/VerusCoin/BitGoJS.git#3797a98f9652b43a34812e687d4a918f87e68843",
     "axios": "1.13.5",
     "bignumber.js": "9.1.0",
     "bn.js": "5.2.3",
-    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#7a7b01db697222cd68507a9dbf15f289615ea890",
-    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client#58689ea52500a6a6e4aa741e5d2ed41d7bc6ddd7"
+    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#3ffa9d77a3dd98c23fe4f66cf4368946906de780",
+    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client#e8ea8c21f8a3d845e20189440dcd820d16f00891"
   },
   "resolutions": {
-    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#7a7b01db697222cd68507a9dbf15f289615ea890",
+    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#3ffa9d77a3dd98c23fe4f66cf4368946906de780",
     "sha.js": "2.4.12",
     "minimatch": "3.1.4",
     "glob": "10.5.0",
