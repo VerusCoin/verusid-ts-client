@@ -76,6 +76,23 @@ import BigNumber from "bignumber.js"
 import { BN } from "bn.js";
 import { GenericEnvelope } from "verus-typescript-primitives/dist/vdxf/classes/envelope/GenericEnvelope";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
+import {
+  CreateIdentityRegistrationTransactionRequest,
+  CreateNameReservationTransactionRequest,
+  PreparedIdentityRegistrationTransaction,
+  SignIdentityRegistrationTransactionArgs,
+  MergeIdentityRegistrationTransactionsArgs,
+  ResolveIdentityRegistrationRequest,
+  createIdentityRegistrationTransaction,
+  createNameReservationTransaction,
+  resolveIdentityRegistration,
+  validatePreparedIdentityRegistrationTransaction
+} from "./identity/registration";
+import {
+  InspectIdentityRegistrationSignaturesArgs,
+  inspectIdentityRegistrationSignatures,
+  signIdentityRegistrationTransaction
+} from "./identity/registrationSigning";
 
 const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
@@ -169,6 +186,55 @@ class VerusIdInterface {
     if (_infores.error) throw new Error(_infores.error.message);
     const info = _infores.result!;
     return info.longestchain;
+  }
+
+  /** Resolve and quote a modern commit/reveal registration without broadcasting. */
+  resolveIdentityRegistration(request: ResolveIdentityRegistrationRequest) {
+    return resolveIdentityRegistration(this.interface, request);
+  }
+
+  /** Builds the commitment transaction and returns private reservation recovery data. */
+  createNameReservationTransaction(request: CreateNameReservationTransactionRequest) {
+    return createNameReservationTransaction(this.interface, request);
+  }
+
+  /** Spends an explicitly identified, confirmed commitment to create an identity. */
+  createIdentityRegistrationTransaction(request: CreateIdentityRegistrationTransactionRequest) {
+    return createIdentityRegistrationTransaction(this.interface, request);
+  }
+
+  signIdentityRegistrationTransaction(request: SignIdentityRegistrationTransactionArgs) {
+    const prepared = request.transaction;
+    validatePreparedIdentityRegistrationTransaction(prepared, request.txHex);
+    for (const partial of request.partialTransactions || []) validatePreparedIdentityRegistrationTransaction(prepared, partial);
+    return signIdentityRegistrationTransaction({
+      txHex: request.txHex == null ? prepared.txHex : request.txHex,
+      prevouts: prepared.prevouts,
+      identityAuthorities: prepared.identityAuthorities,
+      keys: request.keys,
+      partialTransactions: request.partialTransactions
+    });
+  }
+
+  mergeIdentityRegistrationTransactions(request: MergeIdentityRegistrationTransactionsArgs) {
+    return this.signIdentityRegistrationTransaction(request);
+  }
+
+  inspectIdentityRegistrationSignatures(request: InspectIdentityRegistrationSignaturesArgs) {
+    return inspectIdentityRegistrationSignatures(request);
+  }
+
+  /** Verify the approved economic intent and every supplied signature; inspect signingStatus before broadcast. */
+  validateIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex = prepared.txHex) {
+    validatePreparedIdentityRegistrationTransaction(prepared, candidateHex);
+    return {
+      valid: true as const,
+      ...inspectIdentityRegistrationSignatures({
+        txHex: candidateHex,
+        prevouts: prepared.prevouts,
+        identityAuthorities: prepared.identityAuthorities
+      })
+    };
   }
 
   async getChainId() {

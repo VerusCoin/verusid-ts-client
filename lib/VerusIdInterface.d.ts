@@ -3,6 +3,8 @@ import { GetIdentityResponse, LoginConsentRequest, LoginConsentChallenge, LoginC
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import BigNumber from "bignumber.js";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
+import { CreateIdentityRegistrationTransactionRequest, CreateNameReservationTransactionRequest, PreparedIdentityRegistrationTransaction, SignIdentityRegistrationTransactionArgs, MergeIdentityRegistrationTransactionsArgs, ResolveIdentityRegistrationRequest } from "./identity/registration";
+import { InspectIdentityRegistrationSignaturesArgs } from "./identity/registrationSigning";
 export type CurrencyTransferOutput = {
     currencies: {
         [currency: string]: string | number;
@@ -45,6 +47,24 @@ declare class VerusIdInterface {
     interface: VerusdRpcInterface;
     constructor(chain: string, baseURL: string, config?: AxiosRequestConfig, rpcRequestOverride?: RPCRequestOverride, APIAuth?: APIAuthData);
     getCurrentHeight(): Promise<number>;
+    /** Resolve and quote a modern commit/reveal registration without broadcasting. */
+    resolveIdentityRegistration(request: ResolveIdentityRegistrationRequest): Promise<import("./identity/registration").ResolvedIdentityRegistration>;
+    /** Builds the commitment transaction and returns private reservation recovery data. */
+    createNameReservationTransaction(request: CreateNameReservationTransactionRequest): Promise<import("./identity/registration").NameReservationTransactionResult>;
+    /** Spends an explicitly identified, confirmed commitment to create an identity. */
+    createIdentityRegistrationTransaction(request: CreateIdentityRegistrationTransactionRequest): Promise<PreparedIdentityRegistrationTransaction>;
+    signIdentityRegistrationTransaction(request: SignIdentityRegistrationTransactionArgs): import("./identity/registrationSigning").IdentityRegistrationSigningResult;
+    mergeIdentityRegistrationTransactions(request: MergeIdentityRegistrationTransactionsArgs): import("./identity/registrationSigning").IdentityRegistrationSigningResult;
+    inspectIdentityRegistrationSignatures(request: InspectIdentityRegistrationSignaturesArgs): import("./identity/registrationSigning").IdentityRegistrationSigningResult;
+    /** Verify the approved economic intent and every supplied signature; inspect signingStatus before broadcast. */
+    validateIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex?: string): {
+        hex: string;
+        txHex: string;
+        txid: string;
+        signingStatus: "unsigned" | "partial" | "complete";
+        inputs: import("./identity/registrationSigning").RegistrationInputSignatureStatus[];
+        valid: true;
+    };
     getChainId(): Promise<string>;
     signMessage(iAddrOrIdentity: string, message: string, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string): Promise<string>;
     signHash(iAddrOrIdentity: string, hash: Buffer, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string): Promise<string>;

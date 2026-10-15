@@ -3722,10 +3722,10 @@ varuint-bitcoin@1.0.4:
   resolved "https://registry.yarnpkg.com/varuint-bitcoin/-/varuint-bitcoin-1.0.4.tgz#d812c5dae16e32f60544b6adee1d4be1307d0283"
   integrity sha512-2nW4pVicYWxOMY1u+3T3eFXw24wbFlKz+ug7hd02rozYmeFVBoC6LB7/P4E46jN9aD1ezhX01g2Uh4zrZ+9RWw==
 
-"verus-typescript-primitives@git+https://github.com/VerusCoin/verus-typescript-primitives.git", "verus-typescript-primitives@git+https://github.com/VerusCoin/verus-typescript-primitives.git#3ffa9d77a3dd98c23fe4f66cf4368946906de780":
+"verus-typescript-primitives@git+https://github.com/VerusCoin/verus-typescript-primitives.git", "verus-typescript-primitives@git+https://github.com/VerusCoin/verus-typescript-primitives.git#36cf60817a8ff983b3f8b30f43b3f467fc064ccc":
   version "1.0.0"
-  uid "3ffa9d77a3dd98c23fe4f66cf4368946906de780"
-  resolved "git+https://github.com/VerusCoin/verus-typescript-primitives.git#3ffa9d77a3dd98c23fe4f66cf4368946906de780"
+  uid "36cf60817a8ff983b3f8b30f43b3f467fc064ccc"
+  resolved "git+https://github.com/VerusCoin/verus-typescript-primitives.git#36cf60817a8ff983b3f8b30f43b3f467fc064ccc"
   dependencies:
     base64url "3.0.1"
     bech32 "2.0.0"
@@ -3734,13 +3734,13 @@ varuint-bitcoin@1.0.4:
     bs58check "2.0.0"
     create-hash "1.2.0"
 
-"verusd-rpc-ts-client@git+https://github.com/VerusCoin/verusd-rpc-ts-client#e8ea8c21f8a3d845e20189440dcd820d16f00891":
+"verusd-rpc-ts-client@git+https://github.com/VerusCoin/verusd-rpc-ts-client#5d7155a10671415a7fd3054984b4591f5309fcf3":
   version "0.1.0"
-  resolved "git+https://github.com/VerusCoin/verusd-rpc-ts-client#e8ea8c21f8a3d845e20189440dcd820d16f00891"
+  resolved "git+https://github.com/VerusCoin/verusd-rpc-ts-client#5d7155a10671415a7fd3054984b4591f5309fcf3"
   dependencies:
     axios "1.13.5"
     blake2b "https://github.com/VerusCoin/blake2b"
-    verus-typescript-primitives "git+https://github.com/VerusCoin/verus-typescript-primitives.git#3ffa9d77a3dd98c23fe4f66cf4368946906de780"
+    verus-typescript-primitives "git+https://github.com/VerusCoin/verus-typescript-primitives.git#36cf60817a8ff983b3f8b30f43b3f467fc064ccc"
 
 walker@^1.0.8:
   version "1.0.8"
