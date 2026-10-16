@@ -411,7 +411,7 @@ describe("registration transaction funding and validation", () => {
     ).toBe(true);
     expect(() => safeNative("9007199254740992")).toThrow("safe integer");
     expect(() => safeNative("2100000000000001")).toThrow("monetary limit");
-    expect(() => safeNative("9223372036854775808")).toThrow("64-bit");
+    expect(() => safeNative("9223372036854775808")).toThrow("monetary range");
   });
 
   test.each([

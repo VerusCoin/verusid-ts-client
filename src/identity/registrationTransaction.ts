@@ -22,6 +22,7 @@ import {
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import { RegistrationError } from "./registrationPolicy";
+import { verifyRegistrationFunding } from "./registrationFundingVerification";
 import {
   IdentityReservationScript,
   IdentityScript,
@@ -69,7 +70,8 @@ export type RegistrationPlannedOutput = {
   values: RegistrationAmounts;
 };
 
-const MAX_INT64 = new BN("9223372036854775807");
+// VerusCoin MoneyRange (amount.h / komodo_globals.h) is narrower than int64.
+const MAX_MONEY_RANGE = new BN("5000000000000000000");
 const MAX_SAFE = new BN(Number.MAX_SAFE_INTEGER);
 // BitGo's output and signature-digest type guards impose this narrower bound.
 const MAX_NATIVE = new BN("2100000000000000");
@@ -82,10 +84,10 @@ export function atomic(value: string, label = "Amount"): BN {
     );
   }
   const result = new BN(value, 10);
-  if (result.gt(MAX_INT64))
+  if (result.gt(MAX_MONEY_RANGE))
     throw new RegistrationError(
       "INVALID_AMOUNT",
-      label + " exceeds the signed 64-bit range."
+      label + " exceeds the daemon monetary range."
     );
   return result;
 }
@@ -128,9 +130,11 @@ export function addAmounts(
   source: RegistrationAmounts
 ): void {
   Object.keys(source).forEach((id) => {
-    target[id] = atomic(target[id] || "0")
-      .add(atomic(source[id]))
-      .toString(10);
+    target[id] = atomic(
+      atomic(target[id] || "0")
+        .add(atomic(source[id]))
+        .toString(10)
+    ).toString(10);
   });
 }
 
@@ -179,6 +183,31 @@ function params(
   });
 }
 
+function checkFundingScriptEnvelope(script: Buffer): void {
+  // CScript::IsPayToCryptoCondition recognizes only a direct first push.
+  // Scripts over MAX_SCRIPT_SIZE are unspendable, regardless of their payload.
+  if (script.length > 10000 || script[0] < 1 || script[0] >= 76) {
+    throw new RegistrationError(
+      "UNSUPPORTED_FUNDING",
+      "Funding script is not a spendable daemon smart transaction envelope."
+    );
+  }
+}
+
+function checkFundingScriptSize(smart: SmartTransactionScript): void {
+  // The daemon appends the master to p.vData before checking p.AsVector().
+  // The master is a direct push (<76 bytes), so its push prefix is one byte.
+  // Checking only the serialized token payload misses this overhead.
+  const paramsSize =
+    smart.paramsOptCC.toChunk().length + 1 + smart.masterOptCC.toChunk().length;
+  if (!smart.paramsOptCC.evalCode.eqn(EVALS.EVAL_NONE) && paramsSize >= 6000) {
+    throw new RegistrationError(
+      "UNSUPPORTED_SCRIPT_SIZE",
+      "Funding or change exceeds the daemon smart transaction parameter limit; use a smaller funding set."
+    );
+  }
+}
+
 /** Ordinary transfers only; special registration outputs are handled explicitly. */
 export function readFundingOutput(
   script: Buffer,
@@ -198,6 +227,7 @@ export function readFundingOutput(
     script.subarray(23).equals(Buffer.from("88ac", "hex"))
   )
     return result;
+  checkFundingScriptEnvelope(script);
   const smart = new SmartTransactionScript();
   smart.fromBuffer(script, 0, script.length);
   if (!smart.toBuffer().equals(script))
@@ -205,6 +235,7 @@ export function readFundingOutput(
       "INVALID_PREVOUT",
       "Noncanonical smart funding script."
     );
+  checkFundingScriptSize(smart);
   const master = smart.masterOptCC;
   const condition = smart.paramsOptCC;
   if (
@@ -306,14 +337,17 @@ export function paymentOutput(
         multivalue: reserves.size !== 1,
       }),
     });
-    script = new SmartTransactionScript(
+    const smart = new SmartTransactionScript(
       params(EVALS.EVAL_NONE, reserves.size ? [dest] : []),
       params(
         reserves.size ? EVALS.EVAL_RESERVE_OUTPUT : EVALS.EVAL_NONE,
         [dest],
         reserves.size ? [token.toBuffer()] : []
       )
-    ).toBuffer();
+    );
+    script = smart.toBuffer();
+    checkFundingScriptEnvelope(script);
+    checkFundingScriptSize(smart);
   }
   return {
     role,
@@ -480,7 +514,7 @@ export type FundedRegistration = {
   outputPlan: RegistrationPlannedOutput[];
 };
 
-/** Deterministic approved-input selection; the mandatory zero-value commitment is never coin-selected away. */
+/** Deterministic approved-input selection; the mandatory commitment is never coin-selected away. */
 export async function fundRegistration(
   rpc: VerusdRpcInterface,
   snapshot: RegistrationChainSnapshot,
@@ -490,6 +524,16 @@ export async function fundRegistration(
   changeAddress: string,
   mandatory?: RegistrationPrevout
 ): Promise<FundedRegistration> {
+  // The public selector can be used directly. Capture approvals before RPC
+  // awaits so caller edits cannot replace outputs or the mandatory outpoint
+  // while selection is in progress.
+  snapshot = { ...snapshot };
+  outputs = outputs.map((output) => ({
+    ...output,
+    values: { ...output.values },
+  }));
+  funding = funding.map((input) => ({ ...input }));
+  if (mandatory) mandatory = { ...mandatory, values: { ...mandatory.values } };
   destination(changeAddress);
   const needed: RegistrationAmounts = {
     [snapshot.systemID]: atomic(nativeFee).toString(10),
@@ -554,11 +598,21 @@ export async function fundRegistration(
       safeNative(output.value)
     )
   );
-  return {
+  const funded = {
     txHex: builder.buildIncomplete().toHex(),
     prevouts: selected,
     outputPlan,
   };
+  // Selection uses cached balances for efficiency. A separate decoder must
+  // prove conservation using the actual bytes before the result is released.
+  verifyRegistrationFunding(funded, {
+    snapshot,
+    nativeFee,
+    changeAddress,
+    outputs,
+    commitment: mandatory && { txid: mandatory.txid, vout: mandatory.vout },
+  });
+  return funded;
 }
 
 /** Check all bytes other than signatures, plus raw prevout amounts and currency conservation. */

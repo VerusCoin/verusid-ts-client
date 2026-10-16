@@ -3,6 +3,8 @@ import {
   IdentityCommitmentScript,
   IdentityID,
   KeyID,
+  OptCCParams,
+  SmartTransactionScript,
   TxDestination,
 } from "verus-typescript-primitives";
 import BN from "bn.js";
@@ -83,6 +85,85 @@ function fixture(commitment = true, value = 10000, identity = authority) {
 }
 
 describe("local identity registration signing", () => {
+  test.each([true, false])(
+    "checks daemon master-push limits for 2-of-4 funding (indexed master: %s)",
+    (indexedMaster) => {
+      const destinations = keys.map(
+        (key) =>
+          new TxDestination(new KeyID(crypto.hash160(key.getPublicKeyBuffer())))
+      );
+      const condition = new OptCCParams({
+        version: new BN(3),
+        evalCode: new BN(0),
+        m: new BN(2),
+        n: new BN(4),
+        destinations,
+        vData: [],
+      });
+      const master = indexedMaster
+        ? condition
+        : new OptCCParams({
+            version: new BN(3),
+            evalCode: new BN(0),
+            m: new BN(0),
+            n: new BN(0),
+            destinations: [],
+            vData: [],
+          });
+      const previous = transactionBuilder();
+      const outputScript = new SmartTransactionScript(
+        master,
+        condition
+      ).toBuffer();
+      previous.addInput("ab".repeat(32), 0);
+      previous.addOutput(outputScript, 20000);
+      const source = previous.buildIncomplete();
+      const spending = transactionBuilder();
+      spending.addInput(source, 0);
+      spending.addOutput(keys[0].getAddress(), 10000);
+      const args = {
+        txHex: spending.buildIncomplete().toHex(),
+        prevouts: [
+          { txid: source.getId(), vout: 0, rawTransaction: source.toHex() },
+        ],
+        keys: [[keys[0].toWIF(), keys[1].toWIF()]],
+      };
+      if (indexedMaster) {
+        expect(outputScript[0]).toBe(0x4c);
+        expect(() => signIdentityRegistrationTransaction(args)).toThrow(
+          /master push/
+        );
+      } else {
+        expect(outputScript[0]).toBeLessThan(0x4c);
+        expect(signIdentityRegistrationTransaction(args).signingStatus).toBe(
+          "complete"
+        );
+      }
+    }
+  );
+
+  test("rejects a previous smart script over the daemon script-size limit", () => {
+    const { args } = fixture();
+    const previous = Transaction.fromHex(
+      args.prevouts[0].rawTransaction,
+      network
+    );
+    previous.outs[0].script = Buffer.concat([
+      previous.outs[0].script,
+      Buffer.alloc(10001),
+    ]);
+    const spending = Transaction.fromHex(args.txHex, network);
+    spending.ins[0].hash = previous.getHash();
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        txHex: spending.toHex(),
+        prevouts: [
+          { txid: previous.getId(), vout: 0, rawTransaction: previous.toHex() },
+        ],
+      })
+    ).toThrow(/script size/);
+  });
+
   test("matches the dependency's P2PKH digest and fulfillment exactly", () => {
     const { spending, args } = fixture(false);
     spending.sign(0, keys[0], undefined, Transaction.SIGHASH_ALL, 10000);

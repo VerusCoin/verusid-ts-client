@@ -1,4 +1,5 @@
 import BN from "bn.js";
+import { verifyIdentityRegistrationFunding } from "./registrationFundingVerification";
 import {
   AdvancedNameReservation,
   CurrencyDefinition,
@@ -111,6 +112,8 @@ export interface PreparedIdentityRegistrationTransaction
   changeAddress: string;
   approvedCosts: RegistrationAmounts;
   snapshot: RegistrationChainSnapshot;
+  /** Exact independently approved commitment outpoint, required for reveals. */
+  commitment?: RegistrationFundingInput;
   quote: IdentityRegistrationQuote;
   identityAuthorities: RegistrationIdentityAuthority[];
   requiredSignatures: RegistrationInputSignatureStatus[];
@@ -491,7 +494,8 @@ async function preparedTransaction(
   nativeFee: string,
   revealAuthorities: RegistrationIdentityAuthority[],
   changeAddress: string,
-  approvedCosts: RegistrationAmounts
+  approvedCosts: RegistrationAmounts,
+  commitment?: RegistrationFundingInput
 ): Promise<PreparedIdentityRegistrationTransaction> {
   const signingIdentities: string[] = [];
   for (const prevout of funded.prevouts) {
@@ -524,6 +528,7 @@ async function preparedTransaction(
     changeAddress,
     approvedCosts: { ...approvedCosts },
     snapshot: resolved.snapshot,
+    ...(commitment ? { commitment: { ...commitment } } : {}),
     quote: resolved.quote,
     identityAuthorities,
     revealAuthorities,
@@ -547,7 +552,8 @@ function freezePrepared<T>(value: T): T {
 /** Economic validation must run before releasing a signature, including on external partials. */
 export function validatePreparedIdentityRegistrationTransaction(
   prepared: PreparedIdentityRegistrationTransaction,
-  candidateHex?: string
+  candidateHex?: string,
+  expectedChangeAddress?: string
 ): true {
   if (
     !prepared ||
@@ -692,6 +698,11 @@ export function validatePreparedIdentityRegistrationTransaction(
       i++;
     });
   }
+  verifyIdentityRegistrationFunding(
+    prepared,
+    candidateHex,
+    expectedChangeAddress
+  );
   return true;
 }
 
@@ -1051,6 +1062,7 @@ export async function createIdentityRegistrationTransaction(
     quote.nativeFee,
     revealAuthorities,
     request.changeAddress,
-    request.approvedCosts
+    request.approvedCosts,
+    request.commitment
   );
 }

@@ -93,6 +93,8 @@ import {
   inspectIdentityRegistrationSignatures,
   signIdentityRegistrationTransaction
 } from "./identity/registrationSigning";
+import { verifyIdentityRegistrationFunding } from "./identity/registrationFundingVerification";
+import { RegistrationError } from "./identity/registrationPolicy";
 
 const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
@@ -225,8 +227,8 @@ class VerusIdInterface {
   }
 
   /** Verify the approved economic intent and every supplied signature; inspect signingStatus before broadcast. */
-  validateIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex = prepared.txHex) {
-    validatePreparedIdentityRegistrationTransaction(prepared, candidateHex);
+  validateIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex = prepared.txHex, expectedChangeAddress = prepared.changeAddress) {
+    validatePreparedIdentityRegistrationTransaction(prepared, candidateHex, expectedChangeAddress);
     return {
       valid: true as const,
       ...inspectIdentityRegistrationSignatures({
@@ -235,6 +237,29 @@ class VerusIdInterface {
         identityAuthorities: prepared.identityAuthorities
       })
     };
+  }
+
+  /** Independently account for raw input/output currencies against retained approval. No RPC or signature cache. */
+  verifyIdentityRegistrationFunding(prepared: PreparedIdentityRegistrationTransaction, candidateHex = prepared.txHex, expectedChangeAddress = prepared.changeAddress) {
+    return verifyIdentityRegistrationFunding(prepared, candidateHex, expectedChangeAddress);
+  }
+
+  /** Validate funding, approved intent, and complete signatures on every send, including retries. */
+  async sendIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, signedHex: string, expectedChangeAddress = prepared.changeAddress) {
+    validatePreparedIdentityRegistrationTransaction(prepared, signedHex, expectedChangeAddress);
+    const checked = inspectIdentityRegistrationSignatures({
+      txHex: signedHex,
+      prevouts: prepared.prevouts,
+      identityAuthorities: prepared.identityAuthorities
+    });
+    if (checked.signingStatus !== "complete") {
+      throw new RegistrationError("INCOMPLETE_SIGNATURES", "Registration must be fully signed before broadcast.");
+    }
+    const response = await this.interface.sendRawTransaction(signedHex);
+    if (response.error == null && response.result !== checked.txid) {
+      throw new RegistrationError("BROADCAST_MISMATCH", "Broadcast returned a different registration transaction ID.");
+    }
+    return response;
   }
 
   async getChainId() {

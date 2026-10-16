@@ -21,6 +21,11 @@ export type {
   NameReservationTransactionResult
 } from "./identity/registration";
 export { RegistrationError } from "./identity/registrationPolicy";
+export {
+  verifyRegistrationFunding,
+  verifyIdentityRegistrationFunding
+} from "./identity/registrationFundingVerification";
+export type { RegistrationFundingApproval } from "./identity/registrationFundingVerification";
 export type {
   IdentityRegistrationPolicy,
   IdentityRegistrationQuote,

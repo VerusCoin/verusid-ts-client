@@ -48,7 +48,7 @@ export type FundedRegistration = {
     prevouts: RegistrationPrevout[];
     outputPlan: RegistrationPlannedOutput[];
 };
-/** Deterministic approved-input selection; the mandatory zero-value commitment is never coin-selected away. */
+/** Deterministic approved-input selection; the mandatory commitment is never coin-selected away. */
 export declare function fundRegistration(rpc: VerusdRpcInterface, snapshot: RegistrationChainSnapshot, outputs: RegistrationPlannedOutput[], nativeFee: string, funding: RegistrationFundingInput[], changeAddress: string, mandatory?: RegistrationPrevout): Promise<FundedRegistration>;
 /** Check all bytes other than signatures, plus raw prevout amounts and currency conservation. */
 export declare function validateRegistrationTransaction(prepared: FundedRegistration & {

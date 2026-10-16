@@ -49,6 +49,8 @@ export interface PreparedIdentityRegistrationTransaction extends FundedRegistrat
     changeAddress: string;
     approvedCosts: RegistrationAmounts;
     snapshot: RegistrationChainSnapshot;
+    /** Exact independently approved commitment outpoint, required for reveals. */
+    commitment?: RegistrationFundingInput;
     quote: IdentityRegistrationQuote;
     identityAuthorities: RegistrationIdentityAuthority[];
     requiredSignatures: RegistrationInputSignatureStatus[];
@@ -88,6 +90,6 @@ export interface CreateIdentityRegistrationTransactionRequest {
 }
 export declare function resolveIdentityRegistration(rpc: VerusdRpcInterface, request: ResolveIdentityRegistrationRequest): Promise<ResolvedIdentityRegistration>;
 /** Economic validation must run before releasing a signature, including on external partials. */
-export declare function validatePreparedIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex?: string): true;
+export declare function validatePreparedIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex?: string, expectedChangeAddress?: string): true;
 export declare function createNameReservationTransaction(rpc: VerusdRpcInterface, request: CreateNameReservationTransactionRequest): Promise<NameReservationTransactionResult>;
 export declare function createIdentityRegistrationTransaction(rpc: VerusdRpcInterface, request: CreateIdentityRegistrationTransactionRequest): Promise<PreparedIdentityRegistrationTransaction>;

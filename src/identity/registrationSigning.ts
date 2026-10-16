@@ -274,6 +274,18 @@ function parseInput(
       conditions: [destinationCondition(destination, authorities, network)],
     };
   }
+  // CScript::IsPayToCryptoCondition recognizes only a direct first data push,
+  // and refuses scripts above MAX_SCRIPT_SIZE. A generic script decoder alone
+  // also accepts PUSHDATA1 masters, which the daemon can never spend as CCs.
+  if (
+    output.script.length > 10000 ||
+    output.script[0] <= 0 ||
+    output.script[0] >= 0x4c
+  ) {
+    throw new Error(
+      "Unsupported smart input envelope: script size or master push exceeds daemon limits"
+    );
+  }
   const smart = new SmartTransactionScript();
   if (
     smart.fromBuffer(output.script) !== output.script.length ||
@@ -598,12 +610,12 @@ export function signIdentityRegistrationTransaction(
     if (signatures.length === 0)
       transaction.ins[index].script = Buffer.alloc(0);
     else if (input.smart) {
+      // The pinned ECSignature requires an explicit offset: an omitted offset
+      // makes its second integer overwrite the first instead of following it.
       transaction.ins[index].script = script.compile([
         new SmartTransactionSignatures(
           1,
           Transaction.SIGHASH_ALL,
-          // The pinned ECSignature requires an explicit offset: an omitted offset
-          // makes its second integer overwrite the first instead of following it.
           signatures.map(
             (entry) =>
               new SmartTransactionSignature(

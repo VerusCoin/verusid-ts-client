@@ -57,7 +57,7 @@ declare class VerusIdInterface {
     mergeIdentityRegistrationTransactions(request: MergeIdentityRegistrationTransactionsArgs): import("./identity/registrationSigning").IdentityRegistrationSigningResult;
     inspectIdentityRegistrationSignatures(request: InspectIdentityRegistrationSignaturesArgs): import("./identity/registrationSigning").IdentityRegistrationSigningResult;
     /** Verify the approved economic intent and every supplied signature; inspect signingStatus before broadcast. */
-    validateIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex?: string): {
+    validateIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex?: string, expectedChangeAddress?: string): {
         hex: string;
         txHex: string;
         txid: string;
@@ -65,6 +65,10 @@ declare class VerusIdInterface {
         inputs: import("./identity/registrationSigning").RegistrationInputSignatureStatus[];
         valid: true;
     };
+    /** Independently account for raw input/output currencies against retained approval. No RPC or signature cache. */
+    verifyIdentityRegistrationFunding(prepared: PreparedIdentityRegistrationTransaction, candidateHex?: string, expectedChangeAddress?: string): true;
+    /** Validate funding, approved intent, and complete signatures on every send, including retries. */
+    sendIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, signedHex: string, expectedChangeAddress?: string): Promise<import("verusd-rpc-ts-client/lib/types/RpcRequest").RpcRequestResult<string | import("verus-typescript-primitives/dist/transaction/RawTransaction").RawTransaction>>;
     getChainId(): Promise<string>;
     signMessage(iAddrOrIdentity: string, message: string, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string): Promise<string>;
     signHash(iAddrOrIdentity: string, hash: Buffer, primaryAddrWif: string, getIdentityResult?: GetIdentityResponse["result"], currentHeight?: number, chainIAddr?: string): Promise<string>;
