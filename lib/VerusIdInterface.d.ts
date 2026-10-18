@@ -33,6 +33,9 @@ export type IdentityUpdateCurrencyTransferOptions = {
     parseVdxfObjects?: boolean;
     isTestnet?: boolean;
     expectedIdentityPrimaryAddress?: string;
+    /** Exact ordered signing policy. Supply both fields instead of expectedIdentityPrimaryAddress. */
+    expectedIdentityPrimaryAddresses?: string[];
+    expectedIdentityMinimumSignatures?: number;
     allowUnverifiedPrevouts?: boolean;
 };
 export type AddressUtxos = Extract<GetAddressUtxosResponse["result"], unknown[]>;

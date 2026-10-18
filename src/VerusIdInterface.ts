@@ -136,6 +136,9 @@ export type IdentityUpdateCurrencyTransferOptions = {
   parseVdxfObjects?: boolean;
   isTestnet?: boolean;
   expectedIdentityPrimaryAddress?: string;
+  /** Exact ordered signing policy. Supply both fields instead of expectedIdentityPrimaryAddress. */
+  expectedIdentityPrimaryAddresses?: string[];
+  expectedIdentityMinimumSignatures?: number;
   // Only use this for trusted callers or static fixtures that cannot provide previous raw transactions.
   allowUnverifiedPrevouts?: boolean;
 }
@@ -1981,6 +1984,33 @@ class VerusIdInterface {
     const utxos = getUtxos(utxoList);
     if (!currencyTransferOutputs.length) throw new Error("Must provide at least one explicit currency transfer output.");
 
+    // Retain the caller's approved ownership policy before any RPC await. A
+    // copied address list prevents later form changes from relaxing this check.
+    const expectedPrimaryAddress = options.expectedIdentityPrimaryAddress == null ? changeAddress : options.expectedIdentityPrimaryAddress;
+    const suppliedPrimaryAddresses = options.expectedIdentityPrimaryAddresses;
+    const expectedMinimumSignatures = options.expectedIdentityMinimumSignatures;
+    const hasExpectedPolicy = suppliedPrimaryAddresses !== undefined || expectedMinimumSignatures !== undefined;
+    let expectedPrimaryAddresses: string[] | undefined;
+    if (hasExpectedPolicy) {
+      if (options.expectedIdentityPrimaryAddress !== undefined) {
+        throw new Error("Choose either an expected primary address or a complete expected identity signing policy.");
+      }
+      if (!Array.isArray(suppliedPrimaryAddresses) || suppliedPrimaryAddresses.length === 0 || suppliedPrimaryAddresses.length > 25 ||
+          !Number.isInteger(expectedMinimumSignatures) || expectedMinimumSignatures! < 1 ||
+          expectedMinimumSignatures! > suppliedPrimaryAddresses.length || expectedMinimumSignatures! > 13) {
+        throw new Error("Expected identity signing policy requires primary addresses and a valid minimum signature count.");
+      }
+      expectedPrimaryAddresses = [...suppliedPrimaryAddresses];
+      try {
+        if (new Set(expectedPrimaryAddresses).size !== expectedPrimaryAddresses.length ||
+            expectedPrimaryAddresses.some(primary => typeof primary !== "string" || KeyID.fromAddress(primary).toAddress() !== primary)) {
+          throw new Error("Invalid primary address.");
+        }
+      } catch (_) {
+        throw new Error("Expected identity primary addresses must be distinct transparent R-addresses.");
+      }
+    }
+
     const preparedIdentityUpdate = await this.prepareIdentityUpdateTransaction(
       identity,
       rawIdentityTransaction,
@@ -1990,10 +2020,17 @@ class VerusIdInterface {
       options.isTestnet == null ? false : options.isTestnet
     );
 
-    VerusIdInterface.validateIdentityPrimaryAddress(
-      preparedIdentityUpdate.identityOnOutput,
-      options.expectedIdentityPrimaryAddress == null ? changeAddress : options.expectedIdentityPrimaryAddress
-    );
+    if (expectedPrimaryAddresses) {
+      const outputIdentity = preparedIdentityUpdate.identityOnOutput.toJson();
+      const outputPrimaryAddresses = outputIdentity.primaryaddresses || [];
+      if (outputPrimaryAddresses.length !== expectedPrimaryAddresses.length ||
+          outputPrimaryAddresses.some((primary, index) => primary !== expectedPrimaryAddresses![index]) ||
+          outputIdentity.minimumsignatures !== expectedMinimumSignatures) {
+        throw new Error("Identity signing policy does not match the expected primary addresses and minimum signatures.");
+      }
+    } else {
+      VerusIdInterface.validateIdentityPrimaryAddress(preparedIdentityUpdate.identityOnOutput, expectedPrimaryAddress);
+    }
 
     const chainId = options.chainIAddr != null ? options.chainIAddr : await this.getChainId();
     const currencyTransferTxHex = VerusIdInterface.createUnfundedCurrencyTransferTransaction(
