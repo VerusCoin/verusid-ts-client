@@ -86,12 +86,14 @@ export interface IdentityRegistrationSigningResult {
 }
 
 type Signature = { publicKey: Buffer; signature: any };
+
 type Condition = {
   destination: string;
   identityID?: string;
   threshold: number | null;
   eligibleKeyIDs: string[];
 };
+
 type SigningInput = {
   script: Buffer;
   value: number;
@@ -105,34 +107,45 @@ const SECP256K1_ORDER = new BN(
   16
 );
 
+// EvalCryptoConditionSig applies the daemon's PBaaS script-element limit to
+// the fulfillment payload, excluding the script's push opcode and length.
+const MAX_SMART_FULFILLMENT_BYTES = 6000;
+
 function requireHex(value: string, label: string): Buffer {
   if (typeof value !== "string" || !/^(?:[0-9a-fA-F]{2})+$/.test(value)) {
     throw new Error(`${label} must be nonempty hex`);
   }
+
   return Buffer.from(value, "hex");
 }
 
 function readTransaction(hex: string, network: typeof networks.verus): any {
   const bytes = requireHex(hex, "Transaction");
+
   // The dependency rejects shielded spends, shielded outputs, joinsplits, and
   // nonzero valueBalance. Its strict parser also rejects trailing bytes.
   const transaction = Transaction.fromBuffer(bytes, network);
+
   if (!transaction.toBuffer().equals(bytes)) {
     throw new Error("Noncanonical transaction serialization");
   }
+
   return transaction;
 }
 
 function skeleton(transaction: any): string {
   const copy = transaction.clone();
+
   copy.ins.forEach((input: any) => {
     input.script = Buffer.alloc(0);
   });
+
   return copy.toHex();
 }
 
 function keyID(publicKey: Buffer, network: typeof networks.verus): string {
   ECPair.fromPublicKeyBuffer(publicKey, network);
+
   return address.toBase58Check(crypto.hash160(publicKey), network.pubKeyHash);
 }
 
@@ -141,8 +154,10 @@ function authorityMap(
   network: typeof networks.verus
 ): Map<string, Condition> {
   const result = new Map<string, Condition>();
+
   for (const authority of authorities) {
     const identity = address.fromBase58Check(authority.identityID);
+
     if (
       identity.version !== network.verusID ||
       identity.hash.length !== 20 ||
@@ -151,8 +166,11 @@ function authorityMap(
     ) {
       throw new Error("Invalid or duplicate identity authorization context");
     }
-    if (authority.revoked)
+
+    if (authority.revoked) {
       throw new Error("A revoked identity cannot authorize registration");
+    }
+
     if (
       !Array.isArray(authority.primaryAddresses) ||
       authority.primaryAddresses.length < 1 ||
@@ -164,11 +182,14 @@ function authorityMap(
     ) {
       throw new Error("Invalid identity authorization threshold");
     }
+
     const eligibleKeyIDs = authority.primaryAddresses.map((primary) => {
       if (/^(02|03)[0-9a-fA-F]{64}$/.test(primary)) {
         return keyID(Buffer.from(primary, "hex"), network);
       }
+
       const decoded = address.fromBase58Check(primary);
+
       if (
         decoded.version !== network.pubKeyHash ||
         decoded.hash.length !== 20 ||
@@ -178,11 +199,14 @@ function authorityMap(
           "Identity primary authorities must be public keys or key hashes"
         );
       }
+
       return primary;
     });
+
     if (new Set(eligibleKeyIDs).size !== eligibleKeyIDs.length) {
       throw new Error("Duplicate identity primary key");
     }
+
     result.set(authority.identityID, {
       destination: authority.identityID,
       identityID: authority.identityID,
@@ -190,6 +214,7 @@ function authorityMap(
       eligibleKeyIDs,
     });
   }
+
   return result;
 }
 
@@ -207,37 +232,46 @@ function destinationCondition(
 ): Condition {
   if (destination.type.eq(TxDestination.TYPE_PK)) {
     const publicKey = destination.data.toBuffer();
-    if (publicKey.length !== 33)
+
+    if (publicKey.length !== 33) {
       throw new Error("Smart inputs require compressed public keys");
+    }
+
     return {
       destination: publicKey.toString("hex"),
       threshold: 1,
       eligibleKeyIDs: [keyID(publicKey, network)],
     };
   }
+
   if (destination.type.eq(TxDestination.TYPE_PKH)) {
     const decoded = address.fromBase58Check(destination.toAddress());
+
     if (
       decoded.version !== network.pubKeyHash ||
       decoded.hash.equals(Buffer.alloc(20))
     ) {
       throw new Error("Invalid input key destination");
     }
+
     return {
       destination: destination.toAddress(),
       threshold: 1,
       eligibleKeyIDs: [destination.toAddress()],
     };
   }
+
   if (destination.type.eq(TxDestination.TYPE_ID)) {
     const identityID = destination.toAddress();
     const decoded = address.fromBase58Check(identityID);
+
     if (
       decoded.version !== network.verusID ||
       decoded.hash.equals(Buffer.alloc(20))
     ) {
       throw new Error("Invalid input identity destination");
     }
+
     return (
       authorities.get(identityID) || {
         destination: identityID,
@@ -247,6 +281,7 @@ function destinationCondition(
       }
     );
   }
+
   throw new Error("Unsupported registration input destination");
 }
 
@@ -258,15 +293,18 @@ function parseInput(
   if (!Number.isSafeInteger(output.value) || output.value < 0) {
     throw new Error("Input value is not a safe nonnegative atomic amount");
   }
+
   if (output.value > 2100000000000000) {
     throw new Error(
       "Native input value exceeds the transaction library monetary limit"
     );
   }
+
   if (script.pubKeyHash.output.check(output.script)) {
     const destination = new TxDestination(
       new KeyID(script.pubKeyHash.output.decode(output.script))
     );
+
     return {
       ...output,
       smart: false,
@@ -274,6 +312,7 @@ function parseInput(
       conditions: [destinationCondition(destination, authorities, network)],
     };
   }
+
   // CScript::IsPayToCryptoCondition recognizes only a direct first data push,
   // and refuses scripts above MAX_SCRIPT_SIZE. A generic script decoder alone
   // also accepts PUSHDATA1 masters, which the daemon can never spend as CCs.
@@ -286,15 +325,19 @@ function parseInput(
       "Unsupported smart input envelope: script size or master push exceeds daemon limits"
     );
   }
+
   const smart = new SmartTransactionScript();
+
   if (
     smart.fromBuffer(output.script) !== output.script.length ||
     !smart.toBuffer().equals(output.script)
   ) {
     throw new Error("Noncanonical smart input script");
   }
+
   const master = smart.masterOptCC;
   const params = smart.paramsOptCC;
+
   for (const part of [master, params]) {
     if (
       !part.version.eqn(3) ||
@@ -304,6 +347,7 @@ function parseInput(
       throw new Error("Invalid smart input parameters");
     }
   }
+
   if (
     !master.evalCode.eqn(EVALS.EVAL_NONE) ||
     master.vData.length !== 0 ||
@@ -311,12 +355,16 @@ function parseInput(
   ) {
     throw new Error("Unsupported smart input condition");
   }
+
   if (params.evalCode.eqn(EVALS.EVAL_IDENTITY_COMMITMENT)) {
     const commitment = new IdentityCommitmentScript();
     commitment.fromBuffer(output.script);
+
     const hash: CommitmentHash = commitment.getCommitment();
-    if (hash.isAdvanced())
+
+    if (hash.isAdvanced()) {
       throw new Error("Advanced offer commitments cannot fund registration");
+    }
   } else if (
     params.evalCode.eqn(EVALS.EVAL_NONE) ||
     params.evalCode.eqn(EVALS.EVAL_RESERVE_OUTPUT)
@@ -333,11 +381,14 @@ function parseInput(
     ) {
       throw new Error("Unsupported smart funding master condition");
     }
+
     if (params.evalCode.eqn(EVALS.EVAL_NONE)) {
-      if (params.vData.length !== 0)
+      if (params.vData.length !== 0) {
         throw new Error("Unexpected smart funding payload");
+      }
     } else {
       const token = new TokenOutput();
+
       if (
         params.vData.length !== 1 ||
         token.fromBuffer(params.vData[0]) !== params.vData[0].length ||
@@ -352,6 +403,7 @@ function parseInput(
       "Unsupported registration input eval; identity definitions and reservations cannot be funding inputs"
     );
   }
+
   return {
     ...output,
     smart: true,
@@ -370,10 +422,18 @@ function verifySignatures(
 ): Map<string, Signature> {
   const result = new Map<string, Signature>();
   const bytes = transaction.ins[index].script;
-  if (bytes.length === 0) return result;
+
+  if (bytes.length === 0) {
+    return result;
+  }
+
   const chunks = script.decompile(bytes);
-  if (!chunks || !script.compile(chunks).equals(bytes))
+
+  if (!chunks || !script.compile(chunks).equals(bytes)) {
     throw new Error("Noncanonical input fulfillment");
+  }
+
+  // Both fulfillment formats must sign the same approved transaction and prevout.
   const digest = transaction.hashForSignatureByNetwork(
     index,
     input.script,
@@ -381,15 +441,23 @@ function verifySignatures(
     Transaction.SIGHASH_ALL,
     false
   );
+
   const add = (publicKey: Buffer, signature: any) => {
-    if (input.smart && publicKey.length !== 33)
+    if (input.smart && publicKey.length !== 33) {
       throw new Error("Smart inputs require compressed public keys");
+    }
+
     const id = keyID(publicKey, network);
-    if (result.has(id)) throw new Error("Duplicate input signature");
+
+    if (result.has(id)) {
+      throw new Error("Duplicate input signature");
+    }
+
     // BitGo's verifier normalizes high-S signatures before checking them. The
     // daemon's compact-signature verifier does not, so reject them explicitly.
     const r = new BN(signature.r.toBuffer(32));
     const s = new BN(signature.s.toBuffer(32));
+
     if (
       r.isZero() ||
       r.gte(SECP256K1_ORDER) ||
@@ -400,11 +468,15 @@ function verifySignatures(
         "Registration input signature must have canonical low-S scalars"
       );
     }
+
     if (
       !ECPair.fromPublicKeyBuffer(publicKey, network).verify(digest, signature)
     ) {
       throw new Error("Invalid registration input signature");
     }
+
+    // Unresolved identities permit signature inspection, but cannot be marked
+    // complete until their primary keys and threshold are known.
     if (
       !input.conditions.some(
         (condition) =>
@@ -414,13 +486,22 @@ function verifySignatures(
     ) {
       throw new Error("Signature does not authorize this input");
     }
+
     result.set(id, { publicKey, signature });
   };
+
   if (input.smart) {
-    if (chunks.length !== 1 || !Buffer.isBuffer(chunks[0]))
+    if (chunks.length !== 1 || !Buffer.isBuffer(chunks[0])) {
       throw new Error("Invalid smart fulfillment");
+    }
+
+    if (chunks[0].length > MAX_SMART_FULFILLMENT_BYTES) {
+      throw new Error("Smart fulfillment exceeds the daemon's 6000-byte limit");
+    }
+
     const collection = new SmartTransactionSignatures();
     const consumed = collection.fromBuffer(chunks[0]);
+
     if (
       collection.error ||
       consumed !== chunks[0].length ||
@@ -431,9 +512,12 @@ function verifySignatures(
     ) {
       throw new Error("Smart signatures must be canonical and use SIGHASH_ALL");
     }
+
     collection.signatures.forEach((entry: any) => {
-      if (entry.sigType !== 1 || entry.oneSignature.length !== 64)
+      if (entry.sigType !== 1 || entry.oneSignature.length !== 64) {
         throw new Error("Unsupported smart signature type");
+      }
+
       add(entry.pubKeyData, ECSignature.fromRSBuffer(entry.oneSignature));
     });
   } else {
@@ -444,11 +528,16 @@ function verifySignatures(
     ) {
       throw new Error("Invalid P2PKH fulfillment");
     }
+
     const parsed = ECSignature.parseScriptSignature(chunks[0]);
-    if (parsed.hashType !== Transaction.SIGHASH_ALL)
+
+    if (parsed.hashType !== Transaction.SIGHASH_ALL) {
       throw new Error("Registration signatures must use SIGHASH_ALL");
+    }
+
     add(chunks[1], parsed.signature);
   }
+
   return result;
 }
 
@@ -457,10 +546,12 @@ function verifySignatures(
  * Economic and registration-policy validation belongs to the prepared builder;
  * this function never approves a change to that transaction's contents.
  */
-export function signIdentityRegistrationTransaction(
-  args: SignIdentityRegistrationTransactionArgs
+function processIdentityRegistrationSignatures(
+  args: SignIdentityRegistrationTransactionArgs,
+  updateSignatures: boolean
 ): IdentityRegistrationSigningResult {
   const network = args.network || networks.verus;
+
   if (
     network.coin !== networks.verus.coin ||
     network.pubKeyHash !== networks.verus.pubKeyHash ||
@@ -473,7 +564,9 @@ export function signIdentityRegistrationTransaction(
       "Unsupported registration signing network or consensus branch"
     );
   }
+
   const transaction = readTransaction(args.txHex, network);
+
   if (
     transaction.version !== 4 ||
     transaction.overwintered !== 1 ||
@@ -485,6 +578,7 @@ export function signIdentityRegistrationTransaction(
       "Registration signing requires a funded transparent Sapling transaction"
     );
   }
+
   if (
     args.prevouts.length !== transaction.ins.length ||
     (args.keys && args.keys.length !== transaction.ins.length)
@@ -493,8 +587,11 @@ export function signIdentityRegistrationTransaction(
       "Prevouts and key arrays must match transaction input order"
     );
   }
+
+  // Bind every input to its raw source output before trusting values or keys.
   const authorities = authorityMap(args.identityAuthorities || [], network);
   const seen = new Set<string>();
+
   const inputs: SigningInput[] = args.prevouts.map((prevout, index) => {
     if (
       !/^[0-9a-fA-F]{64}$/.test(prevout.txid) ||
@@ -503,11 +600,13 @@ export function signIdentityRegistrationTransaction(
     ) {
       throw new Error("Invalid registration prevout");
     }
+
     const source = readTransaction(prevout.rawTransaction, network);
     const txid = Buffer.from(transaction.ins[index].hash)
       .reverse()
       .toString("hex");
     const outpoint = `${txid}:${prevout.vout}`;
+
     if (
       txid !== prevout.txid.toLowerCase() ||
       source.getId() !== txid ||
@@ -519,8 +618,11 @@ export function signIdentityRegistrationTransaction(
         "Registration prevout does not match input, or is duplicated"
       );
     }
+
     seen.add(outpoint);
+
     const output = source.outs[prevout.vout];
+
     if (
       (prevout.scriptHex !== undefined &&
         !requireHex(prevout.scriptHex, "Prevout script").equals(
@@ -534,12 +636,15 @@ export function signIdentityRegistrationTransaction(
         "Registration prevout script or value does not match raw transaction"
       );
     }
+
     return parseInput(output, authorities, network);
   });
+
   const inputValue = inputs.reduce(
     (sum, input) => sum.add(new BN(input.value)),
     new BN(0)
   );
+
   const outputValue = transaction.outs.reduce((sum: BN, output: any) => {
     if (
       !Number.isSafeInteger(output.value) ||
@@ -550,34 +655,53 @@ export function signIdentityRegistrationTransaction(
         "Native output value exceeds the transaction library monetary limit"
       );
     }
+
     return sum.add(new BN(output.value));
   }, new BN(0));
-  if (inputValue.lt(outputValue))
+
+  if (inputValue.lt(outputValue)) {
     throw new Error(
       "Registration transaction spends more native value than its inputs"
     );
+  }
+
   const signatureMaps = inputs.map((input, index) =>
     verifySignatures(transaction, index, input, network)
   );
+
+  // Partial transactions may differ only in their input fulfillments.
   const approved = skeleton(transaction);
-  for (const hex of args.partialTransactions || []) {
+
+  for (const hex of updateSignatures ? args.partialTransactions || [] : []) {
     const partial = readTransaction(hex, network);
-    if (skeleton(partial) !== approved)
+
+    if (skeleton(partial) !== approved) {
       throw new Error("Partial transaction changes the approved transaction");
+    }
+
     inputs.forEach((input, index) => {
       verifySignatures(partial, index, input, network).forEach(
         (signature, id) => {
-          if (!signatureMaps[index].has(id))
+          if (!signatureMaps[index].has(id)) {
             signatureMaps[index].set(id, signature);
+          }
         }
       );
     });
   }
+
   inputs.forEach((input, index) => {
+    // Inspection must retain the exact bytes and txid the caller may submit.
+    // A valid smart fulfillment need not already use our sorted signing order.
+    if (!updateSignatures) {
+      return;
+    }
+
     for (const wif of (args.keys && args.keys[index]) || []) {
       const key = ECPair.fromWIF(wif, network);
       const publicKey = key.getPublicKeyBuffer();
       const id = keyID(publicKey, network);
+
       if (
         !input.conditions.some(
           (condition) => condition.eligibleKeyIDs.indexOf(id) !== -1
@@ -587,8 +711,11 @@ export function signIdentityRegistrationTransaction(
           "Cannot prove this key authorizes the registration input; provide its identity authority context"
         );
       }
-      if (input.smart && publicKey.length !== 33)
+
+      if (input.smart && publicKey.length !== 33) {
         throw new Error("Smart inputs require compressed public keys");
+      }
+
       if (!signatureMaps[index].has(id)) {
         const digest = transaction.hashForSignatureByNetwork(
           index,
@@ -597,19 +724,22 @@ export function signIdentityRegistrationTransaction(
           Transaction.SIGHASH_ALL,
           false
         );
+
         signatureMaps[index].set(id, {
           publicKey,
           signature: key.sign(digest),
         });
       }
     }
+
     // CSmartTransactionSignatures serializes its map in raw uint160 key-ID order.
     const signatures = Array.from(signatureMaps[index].values()).sort((a, b) =>
       Buffer.compare(crypto.hash160(a.publicKey), crypto.hash160(b.publicKey))
     );
-    if (signatures.length === 0)
+
+    if (signatures.length === 0) {
       transaction.ins[index].script = Buffer.alloc(0);
-    else if (input.smart) {
+    } else if (input.smart) {
       // The pinned ECSignature requires an explicit offset: an omitted offset
       // makes its second integer overwrite the first instead of following it.
       transaction.ins[index].script = script.compile([
@@ -634,14 +764,19 @@ export function signIdentityRegistrationTransaction(
       );
     }
   });
+
+  // Recheck the final fulfillments, then count satisfied destination conditions.
+  // An unresolved identity prevents a complete status even if signatures exist.
   const statuses = inputs.map(
     (input, index): RegistrationInputSignatureStatus => {
       const signatures = verifySignatures(transaction, index, input, network);
+
       const requirements = input.conditions.map(
         (condition): RegistrationDestinationSignatureStatus => {
           const signedKeyIDs = condition.eligibleKeyIDs.filter((id) =>
             signatures.has(id)
           );
+
           return {
             ...condition,
             signedKeyIDs,
@@ -653,6 +788,7 @@ export function signIdentityRegistrationTransaction(
           };
         }
       );
+
       return {
         inputIndex: index,
         txid: args.prevouts[index].txid,
@@ -669,7 +805,9 @@ export function signIdentityRegistrationTransaction(
       };
     }
   );
+
   const hex = transaction.toHex();
+
   return {
     hex,
     txHex: hex,
@@ -683,10 +821,22 @@ export function signIdentityRegistrationTransaction(
   };
 }
 
+/**
+ * Verify/merge only signatures against an approved transaction and raw prevouts.
+ * Economic and registration-policy validation belongs to the prepared builder;
+ * this function never approves a change to that transaction's contents.
+ */
+export function signIdentityRegistrationTransaction(
+  args: SignIdentityRegistrationTransactionArgs
+): IdentityRegistrationSigningResult {
+  return processIdentityRegistrationSignatures(args, true);
+}
+
+/** Inspect signatures without changing the supplied transaction bytes or txid. */
 export function inspectIdentityRegistrationSignatures(
   args: InspectIdentityRegistrationSignaturesArgs
 ): IdentityRegistrationSigningResult {
-  return signIdentityRegistrationTransaction(args);
+  return processIdentityRegistrationSignatures(args, false);
 }
 
 export function mergeIdentityRegistrationTransactions(

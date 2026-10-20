@@ -64,6 +64,7 @@ export declare function validateRegistrationIdentityAuthorities(authorities: Reg
  * this function never approves a change to that transaction's contents.
  */
 export declare function signIdentityRegistrationTransaction(args: SignIdentityRegistrationTransactionArgs): IdentityRegistrationSigningResult;
+/** Inspect signatures without changing the supplied transaction bytes or txid. */
 export declare function inspectIdentityRegistrationSignatures(args: InspectIdentityRegistrationSignaturesArgs): IdentityRegistrationSigningResult;
 export declare function mergeIdentityRegistrationTransactions(args: InspectIdentityRegistrationSignaturesArgs & {
     partialTransactions: string[];

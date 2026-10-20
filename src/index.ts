@@ -53,3 +53,8 @@ export {
   VerusIdInterface,
   primitives
 }
+
+export { verifyIdentityUpdateFunding } from "./identity/updateFundingVerification";
+export type { IdentityUpdateFundingApproval, IdentityUpdateSigningInput } from "./identity/updateFundingVerification";
+export { verifyIdentityUpdateData } from "./identity/updateDataVerification";
+export type { IdentityUpdateDataDecryptor, IdentityUpdateDataDecryptionContext } from "./identity/updateDataVerification";

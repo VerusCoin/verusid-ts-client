@@ -122,6 +122,33 @@ async function createVerusPayInvoice() {
 }
 ```
 
+### Verifying identity data uploads
+
+Identity updates containing `signdata` require an `IdentityUpdateDataDecryptor` callback. The wallet authenticates and decrypts each encrypted descriptor and returns the raw plaintext as a `Buffer`; it must throw if authentication or decryption fails. This library does not implement decryption or require wallet private keys.
+
+```typescript
+import {
+  IdentityUpdateDataDecryptor,
+  verifyIdentityUpdateData,
+} from 'verusid-ts-client';
+
+const decryptData: IdentityUpdateDataDecryptor = async (descriptor, context) => {
+  // Application-provided wallet adapter. Use context.encryptToAddress to find
+  // the recipient's viewing key for private uploads; otherwise descriptor.ivk
+  // contains the published viewing key. Authenticate descriptor.objectdata
+  // using descriptor.epk, and return the decrypted bytes without parsing them.
+  return wallet.decryptIdentityData(descriptor, context.encryptToAddress);
+};
+
+await verifyIdentityUpdateData(requestDetails, unfundedTransactionHex, decryptData);
+```
+
+Pass this callback as the final `decryptData` argument to `createUpdateIdentityTransaction`, or as `options.decryptData` to `createUpdateIdentityWithCurrencyTransferTransaction`. Both builders run verification before funding and calculating the dynamic fee allowance. The standalone verifier throws on mismatch and returns `true` on success.
+
+Verification follows each requested content key to its evidence, authenticates its descriptors through the callback, and compares uploaded bytes, item counts, ordering, and supplied salts with the request. It rejects unreferenced evidence, additional metadata, padding, and unnecessary multipart chunks. Public viewing keys are supplied on detached callback descriptors, including for child objects. Private uploads must decrypt using the requested recipient's key; published viewing or symmetric keys are rejected for those uploads.
+
+Supply inline data instead of remote filenames. Per-item labels and MIME types discarded by the current typed request are rejected when returned as upload metadata. Single-item hash-only uploads are rejected because the daemon omits the hash vector needed to bind that evidence to the requested hash; hash-only items within a multi-item MMR are supported. This verifier checks upload content and encoding sizes. It does not recompute MMR commitments or authenticate embedded data signatures, and does not replace transaction funding or authorization validation.
+
 ### Registering an identity
 
 Identity registration has two transactions. `createNameReservationTransaction` creates the **commitment transaction** and a private reservation record. After that commitment confirms, `createIdentityRegistrationTransaction` spends its exact outpoint to publish the reservation and create the identity. These methods do not broadcast or wait for confirmations.
@@ -211,13 +238,44 @@ if (signed.signingStatus === 'complete') {
 }
 ```
 
-`sendIdentityRegistrationTransaction(prepared, signedHex, expectedChangeAddress?)` verifies approved intent, independent currency accounting, and complete signatures immediately before each RPC send, including retries. It checks the returned transaction ID and returns the RPC response. The optional change address is an additional approval retained by the application; if supplied, both the plan and actual change must match it. Otherwise the original prepared plan supplies that approval. Never replace the retained approval with a candidate received from another party. Raw `interface.sendRawTransaction` is a generic RPC operation and does not run these registration checks.
+`sendIdentityRegistrationTransaction(prepared, signedHex, expectedChangeAddress?)` verifies approved intent, independent currency accounting, and complete signatures immediately before each RPC send, including retries. It checks the returned transaction ID against the exact bytes sent and returns the successful RPC response. After submission starts, a transport error, RPC error, missing response, or different returned ID throws `RegistrationError` with code `BROADCAST_UNKNOWN` and the submitted transaction ID in `details.txid`. This means the transaction may have been accepted; check that ID before retrying. Local validation failures occur before any send. The optional change address is an additional approval retained by the application; if supplied, both the plan and actual change must match it. Otherwise the original prepared plan supplies that approval. Never replace the retained approval with a candidate received from another party. Raw `interface.sendRawTransaction` is a generic RPC operation and does not run these registration checks.
 
 The same signing flow applies to `commitment.transaction`. Signing requires the original prepared transaction under `transaction`; the earlier raw `txHex`/`prevouts` signing form is rejected. Supply an optional `txHex` for a partially signed candidate or `partialTransactions` for external signatures. Every candidate is validated against the retained plan before any key is used. `mergeIdentityRegistrationTransactions({ transaction: registration, partialTransactions })` applies the same checks before combining signatures. `inspectIdentityRegistrationSignatures({ txHex, prevouts, identityAuthorities })` reports signature status without approving transaction costs. A restricted namespace may require several signatures on one commitment input. Preserve partial results until all required authorities have signed, then broadcast only the completed transaction after validation.
 
 Persist the reservation and exact signed transactions in the application. After interruption, reconcile the recorded txid/outpoint with chain state and resume the existing operation. Rebuild an expired registration with refreshed costs and funding while its commitment remains unspent. Builders rely on RPC chain-state evidence; offline tests verify construction and validation, and do not establish acceptance by a live daemon.
 
 Construction refreshes authorities and chain state. Local signing, merging, and validation use the prepared snapshot; rebuild and review the transaction if the identity authorities, commitment state, policy, or expiry change while collecting signatures. Run `npm run build` and `npm run test:offline` for the build and offline regression checks.
+
+### Updating or transferring an identity safely
+
+`createUpdateIdentityTransaction` and `createUpdateIdentityWithCurrencyTransferTransaction` verify selected funding prevouts against their actual raw transactions, then independently account for native and every reserve currency. The verified result includes an immutable `fundingApproval`, with the intended outputs, exact fees, permitted change destination, and raw source transactions. Retain this original approval separately from transaction bytes received from another party.
+
+```typescript
+import { verifyIdentityUpdateFunding } from 'verusid-ts-client';
+
+const prepared = await verusIdClient.createUpdateIdentityTransaction(
+  approvedIdentity, changeAddress, rawIdentityTransaction,
+  identityTransactionHeight, approvedFundingUtxos, chainId,
+);
+const approval = prepared.fundingApproval;
+if (!approval) throw new Error('A verified funding approval is required.');
+
+verifyIdentityUpdateFunding(approval, prepared.hex, prepared.utxos);
+const signedHex = verusIdClient.signUpdateIdentityTransaction(
+  prepared.hex, prepared.utxos, approvedKeysByInput, approval,
+);
+// Persist the exact signed bytes before attempting delivery.
+verifyIdentityUpdateFunding(approval, signedHex, prepared.utxos);
+// Broadcast signedHex only after completing signature and current-state checks.
+```
+
+The signer's optional fourth argument verifies the retained approval before and after signing. Call `verifyIdentityUpdateFunding` immediately before every broadcast, including a retry. It permits input signature scripts to change while requiring the approved transaction body, all raw prevouts, source scripts and values, change, and currency totals to match. It does not verify signature completeness, current ownership, confirmation state, unspent state, or expiry; applications must check those independently. Generic `interface.sendRawTransaction` does not run this verifier.
+
+`maxFee` remains a coin-denominated number, but must be finite, nonnegative, and an exact atomic amount. When omitted, the default is a bounded allowance with a 0.001-coin floor, scaled for the planned identity's content and address fee factors, outputs including potential change, and large scripts. Explicit native transfer fees are additional allowance. The returned `nativeFee`, `fees`, and `maxFee` use atomic-unit strings; review actual costs rather than treating the cap as a quote. Unusual daemon storage-fee settings may require an explicitly approved higher cap.
+
+Ordinary canonical P2PKH, P2PK funding, and supported version-3 native/reserve outputs are accounted from their scripts. Unknown or ambiguous scripts, duplicate outpoints or currency-map keys, hidden reserve losses, altered change destinations, and value-bearing identity definition inputs are rejected. An identity definition with a native deposit requires a separate explicitly reviewed workflow. Combined transfers retain each intended payment separately from change; multi-primary identity policies can be approved with both `expectedIdentityPrimaryAddresses` and `expectedIdentityMinimumSignatures`.
+
+The explicit `allowUnverifiedPrevouts` escape hatch is restricted to `NODE_ENV=test` for trusted static fixtures. Enabling it in any other environment throws before RPC work; direct trusted-prevout fallback calls are also guarded. It still performs structural/accounting checks but does not establish raw-prevout authenticity and returns no portable `fundingApproval`. Omitting funding inputs produces an unfunded template, also without an approval. Neither result is suitable for this verified signing/broadcast workflow.
 
 ## Contributing
 

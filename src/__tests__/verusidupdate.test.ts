@@ -6,6 +6,7 @@ import { BN } from 'bn.js';
 import { TEST_REQUEST_ID } from './fixtures/genericenvelope';
 import { GetAddressUtxosResponse } from 'verus-typescript-primitives';
 import { AddressUtxos, IdentityUpdateTransactionResult } from '../VerusIdInterface';
+import { decryptHistoricalUpload } from './fixtures/decryptIdentityUpdateData';
 
 const withChainInfo = (utxos: AddressUtxos): GetAddressUtxosResponse['result'] => ({
   utxos,
@@ -164,6 +165,7 @@ describe('Creates VerusID update transactions', () => {
       ...TEST_UTXOS_TEST_ID_3[TEST_UTXOS_TEST_ID_3.length - 1],
       txid: prevTx.getId(),
       outputIndex: 0,
+      address: TEST_ID_3.identity.primaryaddresses[0],
       script: "00",
       satoshis: 1
     }];
@@ -383,7 +385,7 @@ describe('Creates VerusID update transactions', () => {
     expect(signedTx).not.toBe(res.hex);
   });
 
-  test.each(UTXO_SHAPES)('can create combined identity update and explicit multi-currency reserve transfer tx with %s', async (_shape, toUtxoResponse) => {
+  test.each(UTXO_SHAPES)('can create combined identity update and single-currency reserve transfer with separate native fees using %s', async (_shape, toUtxoResponse) => {
     const nativeUtxo = TEST_UTXOS_TEST_ID_3[TEST_UTXOS_TEST_ID_3.length - 1];
     const tokenUtxo = TEST_UTXOS_TEST_ID_3[2];
     const tokenInfo = smarttxs.unpackOutput(
@@ -441,7 +443,6 @@ describe('Creates VerusID update transactions', () => {
       TEST_ID_3.blockheight,
       [{
         currencies: {
-          [VERUSTEST_I_ADDR]: TRANSFER_SATOSHIS,
           [tokenCurrency]: tokenSatoshis
         },
         convertto: VERUSTEST_I_ADDR,
@@ -472,7 +473,7 @@ describe('Creates VerusID update transactions', () => {
     expect(currencyTransferOutputInfo.fees[VERUSTEST_I_ADDR].toString()).toBe(RESERVE_TRANSFER_FEE_SATOSHIS);
     expect(reserveTransfer.transferDestination.hasAuxDests()).toBe(true);
     expect(reserveTransfer.transferDestination.auxDests[0].getAddressString()).toBe(TEST_ID_3.identity.primaryaddresses[0]);
-    expect(res.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe("-130000");
+    expect(res.deltas.get(VERUSTEST_I_ADDR)!.toString()).toBe("-30000");
     expect(res.deltas.get(tokenCurrency)!.toString()).toBe("-" + tokenSatoshis);
   });
 
@@ -805,35 +806,32 @@ describe('Creates VerusID update transactions', () => {
     expect(signedTx).toEqual(TEST_ID_4_RECOVER_SIGNED_TX);
   });
 
-  test('can create and sign update identity with cmm update including signdata', async () => {
-    const details = {
-      requestid: TEST_REQUEST_ID.toJson(),
-      expiryheight: new BN("1700000000", 10).toString()
-    }
-    
-    const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
-      TEST_ID_5_REQUEST_JSON,
-      details
+  test('can sign the historical funded identity upload with the exact expected signatures', () => {
+    // The historical upload contains labels/MIME metadata absent from its typed
+    // request. Its rejection is covered in identityUpdateDataHistorical.test.ts;
+    // retain this independent regression for transaction completion and signing.
+    const funded = Transaction.fromHex(TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX.hex, networks.verus);
+    const fundingUtxos = funded.ins.map((input: { hash: Buffer; index: number }) =>
+      TEST_ID_5_UTXOS.find(utxo =>
+        utxo.txid === Buffer.from(input.hash).reverse().toString('hex') && utxo.outputIndex === input.index
+      )!
     );
-
-    const res = await VerusId.createUpdateIdentityTransaction(
-      reqDet,
-      TEST_ID_5.identity.primaryaddresses[0],
-      TEST_ID_5_RAW_TRANSACTION,
-      TEST_ID_5.blockheight,
-      TEST_ID_5_UTXOS,
-      VERUSTEST_I_ADDR,
-      0.0001,
-      TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
-      18167,
-      TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
-      true,
-      true,
-      ALLOW_UNVERIFIED_PREVOUTS
+    const identityTx = Transaction.fromHex(TEST_ID_5_RAW_TRANSACTION, networks.verus);
+    const identityOutput = identityTx.outs[TEST_ID_5.vout];
+    const unsigned = smarttxs.completeFundedIdentityUpdate(
+      funded.toHex(), networks.verus, fundingUtxos.map((utxo: AddressUtxos[number]) => Buffer.from(utxo.script, 'hex')),
+      { hash: Buffer.from(identityTx.getId(), 'hex').reverse(), index: TEST_ID_5.vout,
+        script: identityOutput.script, sequence: 4294967295 }
     );
-
-    const signedTx = VerusId.signUpdateIdentityTransaction(res.hex, res.utxos, [[TEST_ID_5_SIGNER_WIF], [TEST_ID_5_SIGNER_WIF]]);
-
+    const identityUtxo = {
+      address: TEST_ID_5.identity.identityaddress,
+      txid: identityTx.getId(), outputIndex: TEST_ID_5.vout,
+      script: identityOutput.script.toString('hex'), satoshis: identityOutput.value,
+      height: TEST_ID_5.blockheight, blocktime: 0, isspendable: false,
+    };
+    const signedTx = VerusId.signUpdateIdentityTransaction(
+      unsigned, [...fundingUtxos, identityUtxo], [[TEST_ID_5_SIGNER_WIF], [TEST_ID_5_SIGNER_WIF]]
+    );
     expect(signedTx).toEqual(TEST_ID_5_SIGNED_TX);
   });
 
@@ -909,7 +907,8 @@ describe('Creates VerusID update transactions', () => {
         TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
         true,
         true,
-        ALLOW_UNVERIFIED_PREVOUTS
+        ALLOW_UNVERIFIED_PREVOUTS,
+        decryptHistoricalUpload
       )
     } catch(e) {
       error = e;
@@ -944,7 +943,8 @@ describe('Creates VerusID update transactions', () => {
         TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
         true,
         true,
-        ALLOW_UNVERIFIED_PREVOUTS
+        ALLOW_UNVERIFIED_PREVOUTS,
+        decryptHistoricalUpload
       )
     } catch (e) {
       error = e;
@@ -979,7 +979,8 @@ describe('Creates VerusID update transactions', () => {
         TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
         true,
         true,
-        ALLOW_UNVERIFIED_PREVOUTS
+        ALLOW_UNVERIFIED_PREVOUTS,
+        decryptHistoricalUpload
       )
     } catch(e) {
       error = e;
@@ -1013,7 +1014,8 @@ describe('Creates VerusID update transactions', () => {
         TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
         true,
         true,
-        ALLOW_UNVERIFIED_PREVOUTS
+        ALLOW_UNVERIFIED_PREVOUTS,
+        decryptHistoricalUpload
       )
     } catch(e) {
       error = e;

@@ -1,6 +1,6 @@
 // These fixtures build real transaction/script bytes directly from primitives.
 // They never use the SDK coin selector, output planner, or transaction validator.
-const {address: addresses, ECPair, networks, Transaction, TransactionBuilder} = require('@bitgo/utxo-lib');
+const {address: addresses, ECPair, networks, script, SmartTransactionSignatures, Transaction, TransactionBuilder} = require('@bitgo/utxo-lib');
 const {
   AdvancedNameReservation, BigNumber: BN, CurrencyValueMap, EVALS, Identity,
   IdentityCommitmentScript, IdentityID, IdentityReservationScript, IdentityScript,
@@ -408,12 +408,51 @@ describe('checked identity registration broadcast', () => {
     expect(rpc).toHaveBeenCalledTimes(1);
   });
 
-  test('rejects an RPC response with a transaction ID different from the verified bytes', async () => {
+  test('sends and identifies valid signatures in their original order', async () => {
+    const {prepared} = fixture({fundingAddress: identityFunding});
+    const secondKey = ECPair.fromPrivateKeyBuffer(Buffer.alloc(32, 9), networks.verus);
+    prepared.identityAuthorities = [{
+      identityID: identityFunding,
+      primaryAddresses: [key.getAddress(), secondKey.getAddress()],
+      minimumSignatures: 2,
+    }];
+    const {client, rpc} = checkedSender();
+    const signed = client.signIdentityRegistrationTransaction({
+      transaction: prepared, keys: [[key.toWIF(), secondKey.toWIF()]],
+    });
+    const candidate = Transaction.fromHex(signed.txHex, networks.verus);
+    const fulfillment = SmartTransactionSignatures.fromChunk(script.decompile(candidate.ins[0].script)[0]);
+    fulfillment.signatures.reverse();
+    candidate.ins[0].script = script.compile([fulfillment.toBuffer()]);
+    expect(candidate.getId()).not.toBe(signed.txid);
+    await expect(client.sendIdentityRegistrationTransaction(prepared, candidate.toHex()))
+      .resolves.toMatchObject({result: candidate.getId(), error: null});
+    expect(rpc.mock.calls[0][0].params[0]).toBe(candidate.toHex());
+  });
+
+  test('reports an unknown outcome when the RPC returns a different transaction ID', async () => {
     const {prepared} = fixture();
     const signed = sign(prepared);
     const {client, rpc} = checkedSender('b'.repeat(64));
     await expect(client.sendIdentityRegistrationTransaction(prepared, signed.txHex))
-      .rejects.toMatchObject({code: 'BROADCAST_MISMATCH'});
+      .rejects.toMatchObject({code: 'BROADCAST_UNKNOWN', details: {txid: signed.txid}});
     expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['transport error', 'RPC error', 'missing response'])('reports an unknown outcome after a possible send: %s', async outcome => {
+    const {prepared} = fixture();
+    const signed = sign(prepared);
+    const {client} = checkedSender();
+    const send = jest.spyOn(client.interface, 'sendRawTransaction');
+    if (outcome === 'transport error') send.mockRejectedValue(new Error('Response timed out'));
+    else if (outcome === 'RPC error') send.mockResolvedValue({error: {code: -27, message: 'Transaction already in chain'}, result: null});
+    else send.mockResolvedValue(undefined);
+    await expect(client.sendIdentityRegistrationTransaction(prepared, signed.txHex))
+      .rejects.toMatchObject({
+        code: 'BROADCAST_UNKNOWN',
+        message: expect.stringContaining('may have been submitted'),
+        details: {txid: signed.txid},
+      });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

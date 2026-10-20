@@ -9,3 +9,7 @@ export type { IdentityRegistrationPolicy, IdentityRegistrationQuote, Registratio
 export type { RegistrationAmounts, RegistrationChainSnapshot, RegistrationFundingInput, RegistrationPrevout, RegistrationPlannedOutput } from "./identity/registrationTransaction";
 export type { RegistrationSigningPrevout, RegistrationIdentityAuthority, InspectIdentityRegistrationSignaturesArgs, RegistrationDestinationSignatureStatus, RegistrationInputSignatureStatus, IdentityRegistrationSigningResult } from "./identity/registrationSigning";
 export { VerusIdInterface, primitives };
+export { verifyIdentityUpdateFunding } from "./identity/updateFundingVerification";
+export type { IdentityUpdateFundingApproval, IdentityUpdateSigningInput } from "./identity/updateFundingVerification";
+export { verifyIdentityUpdateData } from "./identity/updateDataVerification";
+export type { IdentityUpdateDataDecryptor, IdentityUpdateDataDecryptionContext } from "./identity/updateDataVerification";

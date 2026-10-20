@@ -1,6 +1,6 @@
 import { BN } from 'bn.js';
 import { Transaction, networks, smarttxs } from '@bitgo/utxo-lib';
-import { DEST_ID, DEST_PKH, fromBase58Check, Identity, nameAndParentAddrToIAddr, TransferDestination } from 'verus-typescript-primitives';
+import { DEST_ID, DEST_PKH, fromBase58Check, Identity, IdentityScript, IdentityUpdateRequestDetails, nameAndParentAddrToIAddr, TransferDestination } from 'verus-typescript-primitives';
 import { VerusIdInterface } from '../index';
 import { CurrencyTransferOutput, IdentityUpdateCurrencyTransferOptions } from '../VerusIdInterface';
 import { TEST_ID_2, TEST_ID_3, TEST_ID_3_RAW_TX, VERUSTEST_I_ADDR } from './fixtures/verusid';
@@ -158,6 +158,103 @@ describe('combined identity update expected signing policy', () => {
     f.state.onHeight = () => { expected.expectedIdentityPrimaryAddresses.reverse(); };
     await expect(f.client.createUpdateIdentityWithCurrencyTransferTransaction(f.identity, FEE_SOURCE, TEST_ID_3_RAW_TX,
       TEST_ID_3.blockheight, [f.returnOutput], f.utxos, expected)).rejects.toThrow('Identity signing policy does not match');
+  });
+
+  test('snapshots the identity before the first height lookup', async () => {
+    const f = fixture([FIRST], 1);
+    f.state.onHeight = () => { f.identity.setPrimaryAddresses([SECOND]); };
+
+    const result = await f.run({currentHeight: undefined});
+    const transaction = Transaction.fromHex(result.hex, networks.verus);
+    const script = new IdentityScript();
+    script.fromBuffer(transaction.outs[0].script);
+
+    expect(result.identity.toJson().primaryaddresses).toEqual([FIRST]);
+    expect(script.getIdentity().toJson().primaryaddresses).toEqual([FIRST]);
+    expect(f.identity.toJson().primaryaddresses).toEqual([SECOND]);
+  });
+
+  test('checks the signing policy against serialized output instead of a later mutated identity', async () => {
+    const f = fixture([FIRST], 1);
+    const pending = f.run({expectedIdentityPrimaryAddresses: [SECOND]});
+
+    // Preparation has serialized FIRST. Mutating the caller's object while its
+    // promise is pending must not make that transaction satisfy a SECOND policy.
+    f.identity.setPrimaryAddresses([SECOND]);
+    await expect(pending).rejects.toThrow('Identity signing policy does not match');
+    expect(f.state.requests).toEqual([]);
+  });
+
+  test('snapshots partial identity requests before the first height lookup', async () => {
+    const f = fixture();
+    f.identity.upgradeVersion();
+    const request = IdentityUpdateRequestDetails.fromCLIJson({
+      name: f.identity.name,
+      parent: f.identity.parent.toAddress()!,
+      primaryaddresses: [FIRST, SECOND],
+      minimumsignatures: 2,
+    });
+    const template = smarttxs.createUnfundedIdentityUpdate(
+      f.identity.toBuffer().toString('hex'), networks.verus, HEIGHT + 20
+    );
+    f.state.onHeight = () => {
+      request.identity!.setPrimaryAddresses([SECOND]);
+      request.identity!.minSigs = new BN(1);
+    };
+
+    const result = await f.client.createUpdateIdentityWithCurrencyTransferTransaction(
+      request, FEE_SOURCE, TEST_ID_3_RAW_TX, TEST_ID_3.blockheight,
+      [f.returnOutput], f.utxos,
+      {...f.options, currentHeight: undefined, updateIdentityTransactionHex: template}
+    );
+    expect(result.identity.toJson()).toMatchObject({
+      primaryaddresses: [FIRST, SECOND], minimumsignatures: 2,
+    });
+  });
+
+  test.each(['destination', 'currency amounts'])(
+    'snapshots payment %s before the first height lookup', async part => {
+      const f = fixture();
+      f.state.onHeight = () => {
+        if (part === 'destination') {
+          fromBase58Check(SECOND).hash.copy(f.returnOutput.address.destinationBytes);
+        } else {
+          f.returnOutput.currencies[SUBJECT] = '499';
+        }
+      };
+
+      const result = await f.run({currentHeight: undefined});
+      const transaction = Transaction.fromHex(result.hex, networks.verus);
+      const payment = smarttxs.unpackOutput(transaction.outs[1], VERUSTEST_I_ADDR);
+      expect(payment.destinations).toEqual([FIRST]);
+      expect(payment.values[SUBJECT].toString()).toBe('500');
+    }
+  );
+
+  test('retains the approved fee cap if the caller changes options during the height lookup', async () => {
+    const f = fixture();
+    const options = {...f.options, currentHeight: undefined};
+    f.state.onHeight = () => { options.maxFee = 0.01; };
+    f.state.mutate = transaction => { transaction.outs[2].value -= 990000; };
+
+    await expect(f.client.createUpdateIdentityWithCurrencyTransferTransaction(
+      f.identity, FEE_SOURCE, TEST_ID_3_RAW_TX, TEST_ID_3.blockheight,
+      [f.returnOutput], f.utxos, options
+    )).rejects.toThrow(/fee|maximum/i);
+  });
+
+  test('snapshots indexed UTXO metadata before the first height lookup', async () => {
+    const f = fixture();
+    f.state.onHeight = () => {
+      f.utxos[0].address = FIRST;
+      f.utxos[0].script = 'ff';
+      f.utxos[0].satoshis = 0;
+    };
+
+    const result = await f.run({currentHeight: undefined});
+    expect(result.utxos[0].address).toBe(SUBJECT);
+    expect(result.utxos[0].satoshis).toBe(100000);
+    expect(result.fundingApproval).toBeDefined();
   });
 
   test.each(['return', 'change', 'reserve change', 'native fee'])('retains transaction verification when the daemon tampers with %s', async part => {

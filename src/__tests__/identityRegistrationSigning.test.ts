@@ -84,6 +84,59 @@ function fixture(commitment = true, value = 10000, identity = authority) {
   };
 }
 
+function largeSmartFixture() {
+  // Each identity is within the daemon's 25-key / 13-signature limits, but
+  // combining their signatures can still overflow a single CC fulfillment.
+  const signingKeys = Array.from({ length: 60 }, (_, index) =>
+    ECPair.fromPrivateKeyBuffer(Buffer.alloc(32, index + 1), network)
+  );
+  const identities = [81, 82, 83].map(
+    (value) => new IdentityID(Buffer.alloc(20, value))
+  );
+  const identityAuthorities = identities.map((identity, index) => ({
+    identityID: identity.toAddress()!,
+    primaryAddresses: signingKeys
+      .slice(index * 20, (index + 1) * 20)
+      .map((key) => key.getAddress()),
+    minimumSignatures: 13,
+  }));
+  const outputScript = new SmartTransactionScript(
+    new OptCCParams({
+      version: new BN(3),
+      evalCode: new BN(0),
+      m: new BN(0),
+      n: new BN(0),
+      destinations: [],
+      vData: [],
+    }),
+    new OptCCParams({
+      version: new BN(3),
+      evalCode: new BN(0),
+      m: new BN(3),
+      n: new BN(3),
+      destinations: identities.map((identity) => new TxDestination(identity)),
+      vData: [],
+    })
+  ).toBuffer();
+  const previous = transactionBuilder();
+  previous.addInput("ab".repeat(32), 0);
+  previous.addOutput(outputScript, 20000);
+  const source = previous.buildIncomplete();
+  const spending = transactionBuilder();
+  spending.addInput(source, 0);
+  spending.addOutput(keys[0].getAddress(), 10000);
+  return {
+    signingKeys,
+    args: {
+      txHex: spending.buildIncomplete().toHex(),
+      prevouts: [
+        { txid: source.getId(), vout: 0, rawTransaction: source.toHex() },
+      ],
+      identityAuthorities,
+    },
+  };
+}
+
 describe("local identity registration signing", () => {
   test.each([true, false])(
     "checks daemon master-push limits for 2-of-4 funding (indexed master: %s)",
@@ -225,6 +278,83 @@ describe("local identity registration signing", () => {
     expect(merged.txid).not.toBe(
       Transaction.fromHex(args.txHex, network).getId()
     );
+  });
+
+  test("inspection preserves valid signature order and the exact submitted txid", () => {
+    const { args } = fixture(true, 0);
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF(), keys[1].toWIF(), keys[2].toWIF()]],
+    });
+    const transaction = Transaction.fromHex(signed.txHex, network);
+    const signatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    signatures.signatures.reverse();
+    transaction.ins[0].script = script.compile([signatures.toBuffer()]);
+    expect(transaction.getId()).not.toBe(signed.txid);
+
+    const inspected = inspectIdentityRegistrationSignatures({
+      ...args,
+      txHex: transaction.toHex(),
+    });
+    expect(inspected.signingStatus).toBe("complete");
+    expect(inspected.hex).toBe(transaction.toHex());
+    expect(inspected.txHex).toBe(transaction.toHex());
+    expect(inspected.txid).toBe(transaction.getId());
+  });
+
+  test("enforces the 6000-byte smart fulfillment limit when inspecting, signing, and merging", () => {
+    const { args, signingKeys } = largeSmartFixture();
+    const withinLimit = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [signingKeys.slice(0, 59).map((key) => key.toWIF())],
+    });
+    const transaction = Transaction.fromHex(withinLimit.txHex, network);
+    const signatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    expect(signatures.toBuffer()).toHaveLength(5903);
+    expect(withinLimit.signingStatus).toBe("complete");
+    expect(
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: withinLimit.txHex,
+      }).signingStatus
+    ).toBe("complete");
+
+    // Construct one more valid signature independently, so the inspector is
+    // tested with an externally signed oversized transaction as well.
+    const extra = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[signingKeys[59].toWIF()]],
+    });
+    const extraTransaction = Transaction.fromHex(extra.txHex, network);
+    const extraSignatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(extraTransaction.ins[0].script)[0]
+    );
+    signatures.signatures.push(extraSignatures.signatures[0]);
+    expect(signatures.toBuffer()).toHaveLength(6003);
+    transaction.ins[0].script = script.compile([signatures.toBuffer()]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+      })
+    ).toThrow(/6000-byte limit/);
+    expect(() =>
+      signIdentityRegistrationTransaction({
+        ...args,
+        txHex: withinLimit.txHex,
+        keys: [[signingKeys[59].toWIF()]],
+      })
+    ).toThrow(/6000-byte limit/);
+    expect(() =>
+      mergeIdentityRegistrationTransactions({
+        ...args,
+        partialTransactions: [withinLimit.txHex, extra.txHex],
+      })
+    ).toThrow(/6000-byte limit/);
   });
 
   test("matches the dependency's first smart signature before assembling further signatures", () => {

@@ -1,6 +1,10 @@
 import BN from "bn.js";
 import { verifyIdentityRegistrationFunding } from "./registrationFundingVerification";
 import {
+  dropEmptyIdentityContent,
+  validateIdentitySize,
+} from "./identityValidation";
+import {
   AdvancedNameReservation,
   CurrencyDefinition,
   CurrencyValueMap,
@@ -16,6 +20,7 @@ import {
   OptCCParams,
   RESERVE_TRANSFER_BURN_CHANGE_PRICE,
   RESERVE_TRANSFER_DESTINATION,
+  RESERVE_TRANSFER_VALID,
   ReserveTransfer,
   SmartTransactionScript,
   TransferDestination,
@@ -23,6 +28,7 @@ import {
   VerusCLIVerusIDJson,
   currencyAmountToAtomic,
   identityFromJSONForRegistration,
+  resolveIdentityRegistrationName,
   validateIdentityForRegistration,
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
@@ -178,6 +184,17 @@ function snapshotIdentityRegistrationRequest(
   const reservation = { ...request.reservation };
   let identity: Identity | VerusCLIVerusIDJson;
   if (request.identity instanceof Identity) {
+    // Serialization discards address types: an IdentityID primary key would
+    // decode as a KeyID with the same hash. Validate before that information is lost.
+    validateIdentityForRegistration(
+      request.identity,
+      resolveIdentityRegistrationName({
+        name: reservation.fullName,
+        parent: reservation.parentID,
+        systemID: reservation.systemID,
+        rootSystemName: reservation.rootSystemName,
+      })
+    );
     identity = new Identity();
     identity.fromBuffer(
       request.identity.toBuffer(),
@@ -981,7 +998,10 @@ export async function createIdentityRegistrationTransaction(
       false,
       record.rootSystemName
     );
+  // Only prune the detached copy. A single zero-length byte value remains valid.
+  dropEmptyIdentityContent(identity);
   validateIdentityForRegistration(identity, policy.resolvedName);
+  validateIdentitySize(identity);
   // This output may pay the identity created atomically by this same reveal.
   await validateRegistrationChangeAddress(
     rpc,

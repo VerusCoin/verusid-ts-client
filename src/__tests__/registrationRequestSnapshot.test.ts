@@ -12,6 +12,8 @@ import {
   IdentityCommitmentScript,
   IdentityID,
   IdentityScript,
+  KeyID,
+  VerusCLIVerusIDJson,
   nameAndParentAddrToIAddr,
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
@@ -273,4 +275,120 @@ describe("registration request snapshots across asynchronous RPC reads", () => {
       code: "COST_LIMIT_EXCEEDED",
     });
   });
+});
+
+describe("registration identity validation and normalization", () => {
+  test.each(["IdentityID", "wrong address version", "variable-length key"])(
+    "rejects a primitive %s primary address before serialization or RPC",
+    async (kind) => {
+      const h = fixture();
+      const request = await h.revealRequest();
+      const identity = Identity.fromJson(
+        request.identity as VerusCLIVerusIDJson
+      );
+      const primary =
+        kind === "IdentityID"
+          ? new IdentityID(Buffer.alloc(20, 42))
+          : new KeyID(Buffer.alloc(20, 42));
+      if (kind === "wrong address version")
+        primary.version = new IdentityID().version;
+      if (kind === "variable-length key") primary.varlength = true;
+      identity.primaryAddresses = [primary];
+      request.identity = identity;
+      const originalAddress = primary.toAddress();
+      const originalVarlength = primary.varlength;
+      const serialize = jest.spyOn(identity, "toBuffer");
+      const getInfo = jest.spyOn(h.rpc, "getInfo");
+
+      await expect(
+        createIdentityRegistrationTransaction(h.rpc, request)
+      ).rejects.toThrow(/primary|KeyID/i);
+
+      expect(serialize).not.toHaveBeenCalled();
+      expect(getInfo).not.toHaveBeenCalled();
+      expect(identity.primaryAddresses).toEqual([primary]);
+      expect(primary.toAddress()).toBe(originalAddress);
+      expect(primary.varlength).toBe(originalVarlength);
+      expect(primary.hash).toEqual(Buffer.alloc(20, 42));
+    }
+  );
+
+  test.each([
+    ["json", 5735],
+    ["json", 5736],
+    ["primitive", 5735],
+    ["primitive", 5736],
+  ] as const)(
+    "%s identity with %i serialized bytes respects the daemon's wrapped size limit",
+    async (kind, size) => {
+      const h = fixture();
+      const request = await h.revealRequest();
+      const json = request.identity as VerusCLIVerusIDJson;
+      const contentKey = new IdentityID(Buffer.alloc(20, 43)).toAddress()!;
+      json.contentmultimap = { [contentKey]: ["ab".repeat(5500)] };
+      const contentLength =
+        5500 + size - Identity.fromJson(json).toBuffer().length;
+      json.contentmultimap = { [contentKey]: ["ab".repeat(contentLength)] };
+      const identity = Identity.fromJson(json);
+      expect(identity.toBuffer().length).toBe(size);
+      request.identity = kind === "primitive" ? identity : json;
+
+      const pending = createIdentityRegistrationTransaction(h.rpc, request);
+      // The daemon limits the wrapped identity to 5872 bytes. Its reserve
+      // transfer wrapper adds 137 bytes at this boundary: 5735 + 137 = 5872.
+      if (size > 5735) {
+        await expect(pending).rejects.toMatchObject({
+          code: "IDENTITY_TOO_LARGE",
+        });
+      } else {
+        const prepared = await pending;
+        const tx = Transaction.fromHex(prepared.txHex, networks.verus);
+        const script = new IdentityScript();
+        script.fromBuffer(tx.outs[0].script);
+        expect(script.getIdentity().toBuffer()).toEqual(identity.toBuffer());
+      }
+    }
+  );
+
+  test.each(["json", "primitive"])(
+    "drops empty multimap groups from a %s identity while preserving values and caller data",
+    async (kind) => {
+      const h = fixture();
+      const request = await h.revealRequest();
+      const json = request.identity as VerusCLIVerusIDJson;
+      const [emptyArrayKey, emptyObjectKey, emptyBytesKey, contentKey] = [
+        44, 45, 46, 47,
+      ].map((value) => new IdentityID(Buffer.alloc(20, value)).toAddress()!);
+      json.contentmultimap = {
+        [emptyArrayKey]: [],
+        [emptyObjectKey]: {},
+        [emptyBytesKey]: [""],
+        [contentKey]: ["abcd"],
+      };
+      const identity = Identity.fromJson(json);
+      expect(
+        identity.contentMultiMap.kvContent.getByAddress(emptyArrayKey)
+      ).toEqual([]);
+      expect(
+        identity.contentMultiMap.kvContent.getByAddress(emptyObjectKey)
+      ).toEqual([]);
+      const originalJson = JSON.stringify(json);
+      const originalBytes = identity.toBuffer();
+      request.identity = kind === "primitive" ? identity : json;
+
+      const prepared = await createIdentityRegistrationTransaction(
+        h.rpc,
+        request
+      );
+      const tx = Transaction.fromHex(prepared.txHex, networks.verus);
+      const script = new IdentityScript();
+      script.fromBuffer(tx.outs[0].script);
+      expect(script.getIdentity().contentMultiMap.toJson()).toEqual({
+        [emptyBytesKey]: [""],
+        [contentKey]: ["abcd"],
+      });
+      expect(JSON.stringify(json)).toBe(originalJson);
+      expect(identity.toBuffer()).toEqual(originalBytes);
+    }
+  );
 });
