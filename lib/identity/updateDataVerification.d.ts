@@ -16,6 +16,7 @@ export type IdentityUpdateDataDecryptor = (descriptor: DataDescriptor, context: 
  * Verify the upload portion of an unfunded identity-update template. Every
  * evidence group must be referenced by a requested content key and every leaf
  * must match its requested bytes. This checks uploaded content and its bounded
- * encoding; it does not verify data signatures or recompute MMR commitments.
+ * encoding, including every salted leaf hash and the MMR root. Data signatures
+ * are unsupported and rejected before invoking wallet callbacks.
  */
-export declare function verifyIdentityUpdateData(request: IdentityUpdateRequestDetails, unfundedTxHex: string, decryptData: IdentityUpdateDataDecryptor): Promise<true>;
+export declare function verifyIdentityUpdateData(request: IdentityUpdateRequestDetails, unfundedTxHex: string, decryptData: IdentityUpdateDataDecryptor, expectedSystemId?: string): Promise<true>;

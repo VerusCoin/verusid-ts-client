@@ -1,5 +1,6 @@
 import BN from "bn.js";
 import { verifyIdentityRegistrationFunding } from "./registrationFundingVerification";
+import { isIdentityLockedAtHeight } from "./identityLocks";
 import {
   dropEmptyIdentityContent,
   validateIdentitySize,
@@ -461,12 +462,10 @@ async function authoritiesFor(
           "Signing authority unspent state differs from its confirmed defining output."
         );
       }
-      // FLAG_LOCKED is 0x2. After unlocking, the absolute unlockAfter height is
-      // still locked through that height; an elapsed timelock is spendable.
-      if (
-        !identity.flags.and(new BN(0x2)).isZero() ||
-        identity.unlockAfter.gten(snapshot.candidateHeight)
-      ) {
+      if (isIdentityLockedAtHeight(identity, {
+        chainId: snapshot.systemID,
+        nextBlockHeight: snapshot.candidateHeight,
+      })) {
         throw new RegistrationError(
           "LOCKED_AUTHORITY",
           "Registration signing authority is locked."
@@ -1009,10 +1008,9 @@ export async function createIdentityRegistrationTransaction(
     snapshot,
     record.identityAddress
   );
-  const identityJson = identity.toJson(record.rootSystemName);
   for (const id of new Set([
-    identityJson.revocationauthority!,
-    identityJson.recoveryauthority!,
+    identity.revocationAuthority.toAddress()!,
+    identity.recoveryAuthority.toAddress()!,
   ])) {
     if (id !== record.identityAddress)
       await requireRegistrationIdentity(rpc, id);

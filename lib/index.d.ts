@@ -13,3 +13,7 @@ export { verifyIdentityUpdateFunding } from "./identity/updateFundingVerificatio
 export type { IdentityUpdateFundingApproval, IdentityUpdateSigningInput } from "./identity/updateFundingVerification";
 export { verifyIdentityUpdateData } from "./identity/updateDataVerification";
 export type { IdentityUpdateDataDecryptor, IdentityUpdateDataDecryptionContext } from "./identity/updateDataVerification";
+export type { LocalIdentityUploadCrypto } from "./identity/localUpdateData";
+export { MAX_LOCAL_IDENTITY_UPLOAD_BYTES, MAX_LOCAL_IDENTITY_UPLOAD_OUTPUT_BYTES, MAX_LOCAL_IDENTITY_UPLOAD_ITEMS, } from "./identity/localUpdateData";
+export { MAX_IDENTITY_UPDATE_TRANSACTION_BYTES, MAX_IDENTITY_UPDATE_EXPIRY_DELTA, MIN_IDENTITY_UPDATE_EXPIRY_DELTA, } from "./identity/updateLimits";
+export type { IdentityLockContext } from "./identity/identityLocks";

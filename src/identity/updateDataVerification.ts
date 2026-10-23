@@ -6,26 +6,26 @@ import {
   IdentityScript,
   IdentityUpdateRequestDetails,
   MMRDescriptor,
+  getMMRRoot,
+  hashData,
   PartialMMRData,
-  PartialSignData,
   PBaaSEvidenceRef,
-  SignatureData,
   SmartTransactionScript,
-  VdxfUniValue,
   EVALS,
-  DATA_TYPE_FILENAME,
-  DATA_TYPE_DATAHASH,
-  DATA_TYPE_VDXFDATA,
   HASH_TYPE_SHA256,
 } from "verus-typescript-primitives";
 import * as VDXF from "verus-typescript-primitives/dist/vdxf/vdxfdatakeys";
-import bufferutils from "verus-typescript-primitives/dist/utils/bufferutils";
 import {
   parseScript,
   requireCondition,
   transaction,
 } from "./fundingPrimitives";
 import { readIdentityUpdateEvidence } from "./updateDataEvidence";
+import {
+  validateLocalIdentityUploadRequest,
+  localIdentityUploadItems,
+} from "./localUpdateData";
+import { validateIdentityUpdateTransactionSize } from "./updateLimits";
 import { snapshotUpdateRequestValue } from "./requestSnapshot";
 
 export interface IdentityUpdateDataDecryptionContext {
@@ -54,9 +54,6 @@ type Encoded = {
 
 // Authenticated encryption adds a fixed tag, not arbitrary ciphertext padding.
 const AUTHENTICATION_TAG_BYTES = 16;
-
-// Allow the identity signature header and up to 25 compact signatures.
-const MAX_IDENTITY_SIGNATURE_BYTES = 8 + 25 * 66;
 
 /** Consume the entire object and reject alternate encodings or trailing bytes. */
 function decode<T extends Encoded>(value: T, bytes: Buffer): T {
@@ -106,6 +103,7 @@ async function decryptDescriptor(
   descriptor: DataDescriptor,
   decrypt: IdentityUpdateDataDecryptor,
   context: IdentityUpdateDataDecryptionContext,
+  usedEpks: Set<string>,
   ivk?: Buffer,
   publicLink = false
 ): Promise<DataDescriptor> {
@@ -116,6 +114,8 @@ async function decryptDescriptor(
     descriptor.version.eqn(1) &&
       descriptor.hasEncryptedData() &&
       descriptor.epk?.length === 32 &&
+      !descriptor.epk.equals(Buffer.alloc(32)) &&
+      !usedEpks.has(descriptor.epk.toString("hex")) &&
       (publicLink ? descriptor.ivk?.length === 32 : !descriptor.ivk?.length) &&
       !descriptor.ssk?.length &&
       !descriptor.salt?.length &&
@@ -124,6 +124,7 @@ async function decryptDescriptor(
       !descriptor.hasVDXFKey(),
     "Invalid encrypted identity upload descriptor."
   );
+  usedEpks.add(descriptor.epk.toString("hex"));
 
   // Pass detached objects to application code. Child descriptors inherit the
   // public link's IVK on this copy, without changing the transaction's bytes.
@@ -151,48 +152,30 @@ async function decryptDescriptor(
   );
 }
 
-/** Treat single-item and MMR requests uniformly when comparing uploaded leaves. */
-function uploadItems(request: PartialSignData) {
-  const items = request.isMMRData()
-    ? (request.data as PartialMMRData).data
-    : [
-        {
-          type: request.dataType!,
-          data: request.data as Buffer | VdxfUniValue,
-        },
-      ];
-
-  requireCondition(items.length > 0, "Identity upload request has no data.");
-
-  // A filename describes the daemon's filesystem, not bytes approved locally.
-  for (const item of items) {
-    requireCondition(
-      item.type && !item.type.eq(DATA_TYPE_FILENAME),
-      "Identity upload verification requires inline data, not a remote filename."
-    );
-  }
-
-  return items;
-}
-
 /**
  * Verify the upload portion of an unfunded identity-update template. Every
  * evidence group must be referenced by a requested content key and every leaf
  * must match its requested bytes. This checks uploaded content and its bounded
- * encoding; it does not verify data signatures or recompute MMR commitments.
+ * encoding, including every salted leaf hash and the MMR root. Data signatures
+ * are unsupported and rejected before invoking wallet callbacks.
  */
 export async function verifyIdentityUpdateData(
   request: IdentityUpdateRequestDetails,
   unfundedTxHex: string,
-  decryptData: IdentityUpdateDataDecryptor
+  decryptData: IdentityUpdateDataDecryptor,
+  expectedSystemId?: string
 ): Promise<true> {
-  // Retain the exact request fields used by RPC before callbacks can mutate them.
+  // Retain exact request fields before callbacks can mutate them.
   request = snapshotUpdateRequestValue(request);
+  validateLocalIdentityUploadRequest(request);
+  validateIdentityUpdateTransactionSize(unfundedTxHex);
 
   // Collect complete evidence groups and the identity that links to them.
   // Ordinary identity fields and transaction funding are checked by the caller.
   const tx = transaction(unfundedTxHex);
-  const groups = readIdentityUpdateEvidence(tx.outs);
+  const groups = readIdentityUpdateEvidence(tx.outs, expectedSystemId);
+  const usedEpks = new Set<string>();
+  const publicIvks = new Set<string>();
   const definitions = tx.outs.filter((output: any) =>
     parseScript(SmartTransactionScript, output.script).paramsOptCC.evalCode.eqn(
       EVALS.EVAL_IDENTITY_PRIMARY
@@ -237,7 +220,7 @@ export async function verifyIdentityUpdateData(
     );
 
     const links = values![0] as Buffer;
-    const items = uploadItems(upload);
+    const items = localIdentityUploadItems(upload);
     const context = {
       contentKey,
       encryptToAddress: upload.encryptToAddress?.toAddressString(),
@@ -246,10 +229,9 @@ export async function verifyIdentityUpdateData(
     let cursor = 0;
     let groupIndex = -1;
     let sharedIVK: Buffer | undefined;
-    const linkCount = upload.address ? 2 : 1;
+    const linkCount = 1;
 
-    // A content entry contains one data link and, when requested, a signature
-    // link. Both must reference the same local evidence group.
+    // Unsigned uploads contain exactly one local evidence link.
     for (let index = 0; index < linkCount; index++) {
       const encoded = new BufferDataVdxfObject();
       const end = encoded.fromBuffer(links, cursor);
@@ -258,12 +240,23 @@ export async function verifyIdentityUpdateData(
         tagged(links.subarray(cursor, end), VDXF.DataDescriptorKey.vdxfid)
       );
 
-      if (index === 0) sharedIVK = outer.ivk;
+      if (index === 0) {
+        sharedIVK = outer.ivk;
+        if (!upload.encryptToAddress && sharedIVK) {
+          requireCondition(
+            !sharedIVK.equals(Buffer.alloc(32)) &&
+              !publicIvks.has(sharedIVK.toString("hex")),
+            "Public identity upload viewing keys must be fresh for each entry."
+          );
+          publicIvks.add(sharedIVK.toString("hex"));
+        }
+      }
 
       const link = await decryptDescriptor(
         outer,
         decryptData,
         context,
+        usedEpks,
         sharedIVK,
         !upload.encryptToAddress
       );
@@ -358,6 +351,7 @@ export async function verifyIdentityUpdateData(
         mmr.mmrRoot,
         decryptData,
         context,
+        usedEpks,
         sharedIVK
       );
 
@@ -373,27 +367,27 @@ export async function verifyIdentityUpdateData(
         mmr.mmrHashes,
         decryptData,
         context,
+        usedEpks,
         sharedIVK
       );
 
       metadata(hashDescriptor);
 
-      // A CompactSize count precedes one 32-byte hash per requested leaf.
-      // Neither extra hashes nor trailing bytes may enlarge the fee allowance.
-      const reader = new bufferutils.BufferReader(
-        tagged(hashDescriptor.objectdata, VDXF.VectorUint256Key.vdxfid)
-      );
+      // Strict vector decoding rejects trailing/truncated data. Keep our tag
+      // version and canonical encoding checks: the daemon-compatible decoder
+      // accepts wrapper versions other than the one used by local uploads.
+      tagged(hashDescriptor.objectdata, VDXF.VectorUint256Key.vdxfid);
+      hashes = hashDescriptor.decodeHashVector(true);
 
       requireCondition(
-        reader.readCompactSize() === items.length &&
-          reader.buffer.length - reader.offset === items.length * 32,
+        hashes.length === items.length,
         "Identity upload MMR hash count does not match the requested items."
       );
 
-      hashes = items.map(() => reader.readSlice(32));
       leaves = mmr.dataDescriptors;
     }
 
+    const computedHashes: Buffer[] = [];
     // Compare authenticated leaves in request order, including any supplied salt.
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
@@ -401,124 +395,51 @@ export async function verifyIdentityUpdateData(
         leaves[index],
         decryptData,
         context,
+        usedEpks,
         sharedIVK
       );
 
-      const isHash = item.type.eq(DATA_TYPE_DATAHASH);
-      metadata(leaf, "", "", !isHash);
-
-      // Requests may use FqnVdxfUniValue's compact-key wire format. The daemon
-      // receives its JSON and stores ordinary VDXF bytes instead.
-      const expected = item.type.eq(DATA_TYPE_VDXFDATA)
-        ? VdxfUniValue.fromJson((item.data as VdxfUniValue).toJson()).toBuffer()
-        : (item.data as Buffer);
-
-      if (isHash) {
-        // Hash-only leaves have no payload or salt. Their binding comes from
-        // the MMR hash vector, which the daemon omits for a single-item upload.
+      metadata(leaf, "", "", !item.isHash);
+      if (item.isHash) {
+        const digest = upload.hashType!.eq(HASH_TYPE_SHA256)
+          ? item.bytes
+          : Buffer.from(item.bytes).reverse();
         requireCondition(
           hashes &&
-            expected.length === 32 &&
             leaf.objectdata.length === 0 &&
-            hashes[index].equals(
-              upload.hashType!.eq(HASH_TYPE_SHA256)
-                ? expected
-                : Buffer.from(expected).reverse()
-            ),
+            hashes[index].equals(digest),
           "A hash-only upload requires a matching MMR hash entry; supply inline bytes for a single-item upload."
         );
+        computedHashes.push(digest);
       } else {
         requireCondition(
-          leaf.objectdata.equals(expected),
+          leaf.objectdata.equals(item.bytes),
           "Identity upload plaintext does not match the requested data."
         );
-
-        const salt = upload.isMMRData()
-          ? (upload.data as PartialMMRData).salt?.[index]
-          : undefined;
-
-        if (salt) {
-          // Match the daemon's fixed 32-byte salt representation.
-          const expectedSalt = Buffer.alloc(32);
-          salt.copy(expectedSalt, 0, 0, 32);
-
+        if (item.salt) {
           requireCondition(
-            leaf.salt.equals(expectedSalt),
+            leaf.salt.equals(item.salt),
             "Identity upload salt does not match the request."
           );
         }
+        const digest = hashData(
+          Buffer.concat([leaf.objectdata, leaf.salt]),
+          upload.hashType!.toNumber()
+        );
+        requireCondition(
+          !hashes || hashes[index].equals(digest),
+          "Identity upload MMR leaf hash does not match its salted data."
+        );
+        computedHashes.push(digest);
       }
     }
-
-    if (upload.address) {
-      // Optional signature evidence has bounded encoding and must describe the
-      // requested signer and bindings. Signature authentication is separate.
-      const evidence = group!.proof.chainObjects[1];
-
+    if (root) {
       requireCondition(
-        evidence.vdxfd === VDXF.SignatureDataKey.vdxfid,
-        "Unexpected identity upload signature evidence."
-      );
-
-      const encrypted = decode(
-        new DataDescriptor(),
-        tagged(evidence.data_vec, VDXF.SignatureDataKey.vdxfid)
-      );
-      const plain = await decryptDescriptor(
-        encrypted,
-        decryptData,
-        context,
-        sharedIVK
-      );
-
-      metadata(plain);
-
-      const signature = decode(new SignatureData(), plain.objectdata);
-
-      requireCondition(
-        // Match the signer and the daemon's hash type. For a single leaf,
-        // the MMR root uses the object hash type.
-        signature.version.eqn(1) &&
-          signature.sigType.eqn(1) &&
-          signature.identityID === upload.address.toAddress() &&
-          signature.hashType.eq(
-            items.length > 1
-              ? (upload.data as PartialMMRData).mmrhashtype!
-              : upload.hashType!
-          ) &&
-
-          // Bound variable signature bytes and match the retained MMR root.
-          signature.signatureHash.length === 32 &&
-          (!root || root.equals(signature.signatureHash)) &&
-          signature.signatureAsVch.length > 0 &&
-          signature.signatureAsVch.length <= MAX_IDENTITY_SIGNATURE_BYTES &&
-
-          // Keep binding order and match the daemon's ASCII-only case folding.
-          // Hash byte order is SHA-256 directly, other hashes reversed.
-          JSON.stringify(signature.vdxfKeys) ===
-            JSON.stringify(
-              (upload.vdxfKeys || []).map((value) => value.toAddress())
-            ) &&
-          JSON.stringify(signature.vdxfKeyNames) ===
-            JSON.stringify(
-              (upload.vdxfKeyNames || []).map((value) =>
-                value
-                  .toString("utf8")
-                  .replace(/[A-Z]/g, char => char.toLowerCase())
-              )
-            ) &&
-          JSON.stringify(
-            signature.boundHashes.map((value) => value.toString("hex"))
-          ) ===
-            JSON.stringify(
-              (upload.boundHashes || []).map((value) =>
-                (upload.hashType!.eq(HASH_TYPE_SHA256)
-                  ? value
-                  : Buffer.from(value).reverse()
-                ).toString("hex")
-              )
-            ),
-        "Identity upload signature metadata does not match the request."
+        getMMRRoot(
+          computedHashes,
+          (upload.data as PartialMMRData).mmrhashtype!.toNumber()
+        ).equals(root),
+        "Identity upload MMR root does not match its leaf hashes."
       );
     }
   }

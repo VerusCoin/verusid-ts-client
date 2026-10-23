@@ -1,5 +1,5 @@
 import { BN } from "bn.js";
-import { CompactIAddressObject, ContentMultiMap, DATA_TYPE_MMRDATA, IDENTITY_VERSION_PBAAS, IdentityID, IdentityUpdateRequestDetails, IdentityUpdateResponseDetails, KeyID, KvMap, PartialIdentity, PartialMMRData, PartialSignData, PartialSignDataInitData, SaplingPaymentAddress, SignDataMap } from "verus-typescript-primitives";
+import { CompactIAddressObject, ContentMultiMap, DATA_TYPE_FILENAME, DATA_TYPE_MESSAGE, DATA_TYPE_MMRDATA, HASH_TYPE_BLAKE2B, IDENTITY_VERSION_PBAAS, IdentityID, IdentityUpdateRequestDetails, IdentityUpdateResponseDetails, KeyID, KvMap, PartialIdentity, PartialMMRData, PartialSignData, PartialSignDataInitData, SaplingPaymentAddress, SignDataMap } from "verus-typescript-primitives";
 import { TEST_EXPIRY_HEIGHT, TEST_REQUEST_ID, TEST_SYSTEM_ID, TEST_TXID_RESPONSE } from "./genericenvelope";
 
 export const TEST_CONTENTMAP = new Map();
@@ -42,15 +42,11 @@ export const TEST_ID_UPDATE_PARTIAL_IDENTITY = new PartialIdentity({
 export const TEST_ID_UPDATE_MMR_DATA = new PartialMMRData({
   flags: new BN('0', 10),
   data: [
-    { type: new BN('2', 10), data: Buffer.from('src/__tests__/pbaas/partialmmrdata.test.ts', 'utf-8') },
-    { type: new BN('3', 10), data: Buffer.from('Hello test message 12345', 'utf-8') },
+    { type: DATA_TYPE_FILENAME, data: Buffer.from('src/__tests__/pbaas/partialmmrdata.test.ts', 'utf-8') },
+    { type: DATA_TYPE_MESSAGE, data: Buffer.from('Hello test message 12345', 'utf-8') },
   ],
-  salt: [Buffer.from('=H319X:)@H2Z'), Buffer.from('s*1UHmVr?feI')],
-  mmrhashtype: new BN('1', 10), // e.g. PartialMMRData.HASH_TYPE_SHA256
-  priormmr: [
-    Buffer.from('80a28cdff6bd91a2e96a473c234371fd8b67705a8c4956255ce7b8c7bf20470f02381c9a935f06cdf986a7c5facd77625befa11cf9fd4b59857b457394a8af979ab2830087a3b27041b37bc318484175'),
-    Buffer.from('d97fd4bbd9e88ca0c5822c12d5c9b272b2044722aa48b1c8fde178be6b59ccea509f403d3acd226c16ba3c32f0cb92e2fcaaa02b40d0bc5257e0fbf2e6c3d3d7f1a1df066967b193d131158ba5bef732')
-  ],
+  salt: [Buffer.alloc(32, 1), Buffer.alloc(32, 2)],
+  mmrhashtype: HASH_TYPE_BLAKE2B,
 })
 
 export const TEST_ID_UPDATE_SIGNDATA_MMR: PartialSignDataInitData = {

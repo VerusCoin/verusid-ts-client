@@ -1,6 +1,6 @@
 import { BN } from 'bn.js';
 import { Transaction, networks, smarttxs } from '@bitgo/utxo-lib';
-import { DEST_ID, DEST_PKH, fromBase58Check, Identity, IdentityScript, IdentityUpdateRequestDetails, nameAndParentAddrToIAddr, TransferDestination } from 'verus-typescript-primitives';
+import { CompactIAddressObject, DataByteVectorKey, DEST_ID, DEST_PKH, fromBase58Check, Identity, IdentityScript, IdentityUpdateRequestDetails, nameAndParentAddrToIAddr, TransferDestination, VdxfUniValue } from 'verus-typescript-primitives';
 import { VerusIdInterface } from '../index';
 import { CurrencyTransferOutput, IdentityUpdateCurrencyTransferOptions } from '../VerusIdInterface';
 import { TEST_ID_2, TEST_ID_3, TEST_ID_3_RAW_TX, VERUSTEST_I_ADDR } from './fixtures/verusid';
@@ -44,7 +44,7 @@ const fixture = (primaryAddresses = [FIRST, SECOND], minimumSignatures = 2) => {
     const params = request.params as any[];
     if (request.method === 'getinfo') {
       state.onHeight();
-      return {id: request.id, error: null, result: {longestchain: HEIGHT}};
+      return {id: request.id, error: null, result: {blocks: HEIGHT, longestchain: HEIGHT}};
     }
     if (request.method === 'getrawtransaction') {
       if (!raw.has(params[0])) throw new Error('Unexpected raw transaction');
@@ -70,6 +70,30 @@ const fixture = (primaryAddresses = [FIRST, SECOND], minimumSignatures = 2) => {
 };
 
 describe('combined identity update expected signing policy', () => {
+  test.each(['single', 'complete'] as const)(
+    'checks %s signing policy without converting binary content to daemon JSON', async policy => {
+      const f = fixture([FIRST], 1);
+      const content = new VdxfUniValue({values: [{[DataByteVectorKey.vdxfid]: Buffer.from('00ff80', 'hex')}]});
+      expect(() => content.toJson()).toThrow(/byte-vector wrapper/);
+      f.identity.clearContentMultiMap();
+      f.identity.contentMultiMap.kvContent.set(CompactIAddressObject.fromAddress(SUBJECT), [content]);
+
+      const options = policy === 'single'
+        ? {expectedIdentityPrimaryAddresses: undefined, expectedIdentityMinimumSignatures: undefined,
+          expectedIdentityPrimaryAddress: FIRST}
+        : {};
+      const result = await f.run(options);
+      expect(result.identity.primaryAddresses!.map(address => address.toAddress())).toEqual([FIRST]);
+      expect(result.identity.contentMultiMap.toBuffer()).toEqual(f.identity.contentMultiMap.toBuffer());
+      expect(() => result.identity.toJson()).toThrow(/byte-vector wrapper/);
+
+      const unexpected = policy === 'single'
+        ? {...options, expectedIdentityPrimaryAddress: SECOND}
+        : {expectedIdentityPrimaryAddresses: [SECOND]};
+      await expect(f.run(unexpected)).rejects.toThrow(/Identity (primary address|signing policy)/);
+    }
+  );
+
   test('supports multiple primary addresses while keeping explicit returns separate from fee-source change', async () => {
     const f = fixture();
     const result = await f.run();

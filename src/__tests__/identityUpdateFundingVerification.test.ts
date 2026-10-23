@@ -6,6 +6,7 @@ import {Identity, IdentityScript, TransferDestination, DEST_ID, DEST_PKH, fromBa
 import {VerusIdInterface, verifyIdentityUpdateFunding, IdentityUpdateFundingApproval} from '../index';
 import {TEST_ID_3, VERUSTEST_I_ADDR} from './fixtures/verusid';
 import {defaultIdentityUpdateFeeCap, identityUpdateFeeCap} from '../identity/updateFundingVerification';
+import { IDENTITY_FLAG_ACTIVECURRENCY, IDENTITY_FLAG_TOKENIZED_CONTROL, IDENTITY_FLAG_REVOKED, IDENTITY_FLAG_LOCKED, IDENTITY_MAX_UNLOCK_DELAY } from 'verus-typescript-primitives';
 
 const CHAIN = VERUSTEST_I_ADDR;
 const SUBJECT = TEST_ID_3.identity.identityaddress;
@@ -75,6 +76,150 @@ const approvalOf = (result: any): IdentityUpdateFundingApproval => {
   expect(result.fundingApproval).toBeDefined();
   return result.fundingApproval;
 };
+
+// Replace both source and target coherently, so these tests exercise transition
+// validation rather than only detecting bytes changed after approval.
+async function approvalWithLocks(oldFlags: number, oldUnlock: number, newFlags: number, newUnlock: number) {
+  const f = fixture();
+  const built = await f.build();
+  const approval: IdentityUpdateFundingApproval = JSON.parse(JSON.stringify(approvalOf(built)));
+  const current = Identity.fromJson(f.identity.toJson());
+  current.flags = new BN(oldFlags);
+  current.unlockAfter = new BN(oldUnlock);
+  const next = Identity.fromJson(current.toJson());
+  next.flags = new BN(newFlags);
+  next.unlockAfter = new BN(newUnlock);
+  const source = Transaction.fromHex(f.sourceId.toHex(), networks.verus);
+  source.outs[0].script = IdentityScript.fromIdentity(current).toBuffer();
+  const previousTxid = approval.identity.txid;
+  approval.identity.txid = source.getId();
+  const prevout = approval.prevouts.find(value => value.txid === previousTxid)!;
+  prevout.txid = source.getId();
+  prevout.rawTransaction = source.toHex();
+  const candidate = Transaction.fromHex(approval.txHex, networks.verus);
+  candidate.ins.find((input: any) => Buffer.from(input.hash).reverse().toString('hex') === previousTxid)
+    .hash = Buffer.from(source.getId(), 'hex').reverse();
+  const template = Transaction.fromHex(approval.unfundedTxHex, networks.verus);
+  candidate.outs[0].script = IdentityScript.fromIdentity(next).toBuffer();
+  template.outs[0].script = candidate.outs[0].script;
+  approval.txHex = candidate.toHex();
+  approval.unfundedTxHex = template.toHex();
+  const inputs = built.utxos.map(input => input.txid === previousTxid ? {
+    ...input, txid: source.getId(), script: source.outs[0].script.toString('hex'), rawTransaction: source.toHex(),
+  } : input);
+  return { approval, inputs, client: f.client };
+}
+
+const lockContext = { chainId: CHAIN, nextBlockHeight: HEIGHT + 1 };
+test.each([
+  ['pending removal', 0, HEIGHT + 100, 0, 0],
+  ['pending shortening', 0, HEIGHT + 100, 0, HEIGHT + 99],
+  ['short relock', 0, HEIGHT + 100, 2, 1],
+  ['overflowing relock', 0, HEIGHT + 100, 2, 0xffffffff],
+  ['absolute lock within expiry', 0, 0, 0, HEIGHT + 19],
+] as const)('rejects independent receipts for %s with and without trusted height',
+  async (_name, oldFlags, oldUnlock, newFlags, newUnlock) => {
+    const { approval } = await approvalWithLocks(oldFlags, oldUnlock, newFlags, newUnlock);
+    expect(() => verifyIdentityUpdateFunding(approval)).toThrow(/lock/i);
+    expect(() => verifyIdentityUpdateFunding(approval, approval.txHex, undefined, lockContext)).toThrow(/lock/i);
+  });
+
+test('accepts a daemon-valid over-maximum relock while the absolute lock is pending', async () => {
+  const { approval } = await approvalWithLocks(0, HEIGHT + 100, 2, IDENTITY_MAX_UNLOCK_DELAY.toNumber() + 1);
+  expect(verifyIdentityUpdateFunding(approval)).toBe(true);
+  expect(verifyIdentityUpdateFunding(approval, approval.txHex, undefined, lockContext)).toBe(true);
+});
+
+test('requires independent current height to remove an elapsed countdown, including when signing', async () => {
+  const { approval, client, inputs } = await approvalWithLocks(0, HEIGHT, 0, 0);
+  expect(() => verifyIdentityUpdateFunding(approval)).toThrow(/lock/i);
+  // An external receipt's claimed height is not trusted evidence of expiry.
+  expect(() => verifyIdentityUpdateFunding({ ...approval, nextBlockHeight: HEIGHT + 1 } as any)).toThrow(/lock/i);
+  expect(() => verifyIdentityUpdateFunding(approval, approval.txHex, undefined,
+    { ...lockContext, nextBlockHeight: HEIGHT })).toThrow(/lock/i);
+  expect(verifyIdentityUpdateFunding(approval, approval.txHex, undefined, lockContext)).toBe(true);
+  const keys = inputs.map(() => [key.toWIF()]);
+  expect(() => client.signUpdateIdentityTransaction(approval.txHex, inputs, keys, approval)).toThrow(/lock/i);
+  const signed = client.signUpdateIdentityTransaction(approval.txHex, inputs, keys, approval, lockContext);
+  expect(verifyIdentityUpdateFunding(approval, signed, inputs, lockContext)).toBe(true);
+});
+
+test('checks wrapping unlock arithmetic and inclusion-height bounds independently', async () => {
+  const { approval } = await approvalWithLocks(2, 0xffffffff, 0, HEIGHT + 19);
+  expect(verifyIdentityUpdateFunding(approval, approval.txHex, undefined, lockContext)).toBe(true);
+  expect(() => verifyIdentityUpdateFunding(approval)).toThrow(/lock/i);
+  expect(() => verifyIdentityUpdateFunding(approval, approval.txHex, undefined,
+    { ...lockContext, chainId: OTHER })).toThrow(/chain/i);
+  for (const nextBlockHeight of [0, -1, 1.5, NaN, Infinity, HEIGHT + 21]) {
+    expect(() => verifyIdentityUpdateFunding(approval, approval.txHex, undefined,
+      { ...lockContext, nextBlockHeight })).toThrow(/height|expired/i);
+  }
+});
+
+test.each(['system', 'currency flag', 'tokenized control', 'self revocation', 'excessive new lock'])(
+  'rejects independently supplied funding approvals with an unsupported %s transition',
+  async kind => {
+    const f = fixture();
+    const built = await f.build();
+    // Model an externally supplied, internally consistent receipt, rather than
+    // altering a candidate after approval (already covered by binding tests).
+    const approval: IdentityUpdateFundingApproval = JSON.parse(JSON.stringify(approvalOf(built)));
+    const next = Identity.fromJson(f.identity.toJson());
+    if (kind === 'system') next.systemId = IdentityID.fromAddress(OTHER);
+    if (kind === 'currency flag') next.flags = IDENTITY_FLAG_ACTIVECURRENCY.clone();
+    if (kind === 'tokenized control') next.flags = IDENTITY_FLAG_TOKENIZED_CONTROL.clone();
+    if (kind === 'self revocation') {
+      next.flags = IDENTITY_FLAG_REVOKED.clone();
+      next.recoveryAuthority = IdentityID.fromAddress(SUBJECT);
+    }
+    if (kind === 'excessive new lock') {
+      next.flags = IDENTITY_FLAG_LOCKED.clone();
+      next.unlockAfter = IDENTITY_MAX_UNLOCK_DELAY.addn(1);
+    }
+    const script = IdentityScript.fromIdentity(next).toBuffer();
+    const candidate = Transaction.fromHex(approval.txHex, networks.verus);
+    const template = Transaction.fromHex(approval.unfundedTxHex, networks.verus);
+    candidate.outs[0].script = script;
+    template.outs[0].script = script;
+    approval.txHex = candidate.toHex();
+    approval.unfundedTxHex = template.toHex();
+    expect(() => verifyIdentityUpdateFunding(approval)).toThrow(/system|protected|flag|revoke|recover|lock/i);
+  }
+);
+
+test.each(['remove', 'shorten'])(
+  'rejects an independent receipt that tries to %s a flagged identity lock',
+  async kind => {
+    const f = fixture();
+    const approval: IdentityUpdateFundingApproval =
+      JSON.parse(JSON.stringify(approvalOf(await f.build())));
+    const current = Identity.fromJson(f.identity.toJson());
+    current.flags = IDENTITY_FLAG_LOCKED.clone();
+    current.unlockAfter = new BN(60);
+    const source = Transaction.fromHex(f.sourceId.toHex(), networks.verus);
+    source.outs[0].script = IdentityScript.fromIdentity(current).toBuffer();
+    const previousTxid = approval.identity.txid;
+    const nextTxid = source.getId();
+    approval.identity.txid = nextTxid;
+    const prevout = approval.prevouts.find(value => value.txid === previousTxid)!;
+    prevout.txid = nextTxid;
+    prevout.rawTransaction = source.toHex();
+    const candidate = Transaction.fromHex(approval.txHex, networks.verus);
+    candidate.ins.find((input: any) =>
+      Buffer.from(input.hash).reverse().toString('hex') === previousTxid
+    ).hash = Buffer.from(nextTxid, 'hex').reverse();
+    const template = Transaction.fromHex(approval.unfundedTxHex, networks.verus);
+    if (kind === 'shorten') {
+      const next = Identity.fromJson(current.toJson());
+      next.unlockAfter = new BN(1);
+      candidate.outs[0].script = IdentityScript.fromIdentity(next).toBuffer();
+      template.outs[0].script = candidate.outs[0].script;
+    }
+    approval.txHex = candidate.toHex();
+    approval.unfundedTxHex = template.toHex();
+    expect(() => verifyIdentityUpdateFunding(approval)).toThrow(/lock|delay/i);
+  }
+);
 
 test.each([false, true])('uses the configured chain ID for reserve payments (native substitution: %s)', async nativeSubstitution => {
   const sent = {[nativeSubstitution ? CHAIN : TOKEN]: '50000000'};
@@ -390,7 +535,9 @@ describe.each(['plain', 'combined'] as const)('%s partial update destination typ
   test.each(['recoveryAuthority', 'revocationAuthority', 'parent', 'systemId'] as const)(
     'rejects a KeyID in %s before serialization can convert it to an IdentityID', async field => {
       const f = fixture(mode);
-      const hash = field === 'parent' ? f.identity.parent.hash : fromBase58Check(MAIN).hash;
+      // Use the existing destination for the valid baseline. Parent/system
+      // cannot change, and a new authority must exist on the configured chain.
+      const hash = f.identity[field].hash;
       const updated = Identity.fromJson(f.identity.toJson());
       updated[field] = new IdentityID(Buffer.from(hash));
       const template = smarttxs.createUnfundedIdentityUpdate(updated.toBuffer().toString('hex'), networks.verus, HEIGHT + 20);

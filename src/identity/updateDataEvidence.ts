@@ -4,6 +4,10 @@ import {
   EVALS,
   SmartTransactionScript,
   TxDestination,
+  fromBase58Check,
+  NOTARY_EVIDENCE_MAX_CONDITION_BYTES,
+  NOTARY_EVIDENCE_MULTIPART_CHUNK_BYTES,
+  NOTARY_EVIDENCE_PUBLIC_KEY_HEX,
 } from "verus-typescript-primitives";
 import { parseScript, requireCondition } from "./fundingPrimitives";
 
@@ -17,15 +21,15 @@ export type IdentityUpdateEvidence = {
 const NOTARY_HEADER_BYTES = 59;
 const IMPORT_PROOF = 3;
 const MULTIPART_PROOF = 2;
-const MAX_CONDITION_BYTES = 6000;
+const MAX_CONDITION_BYTES = NOTARY_EVIDENCE_MAX_CONDITION_BYTES;
 
 // updateidentity uses an empty evidence script (148 bytes), plus 128 bytes of
 // multipart overhead, when choosing the daemon's fixed-size data chunks.
-const MULTIPART_CHUNK_BYTES = MAX_CONDITION_BYTES - 148 - 128;
+const MULTIPART_CHUNK_BYTES = NOTARY_EVIDENCE_MULTIPART_CHUNK_BYTES;
 
 // The daemon's fixed public key for the notary-evidence contract.
 const NOTARY_EVIDENCE_PUBLIC_KEY = Buffer.from(
-  "03e1894e9d487125be5a8c6657a8ce01bc81ba7816d698dbfcfb0483754eb5a2d9",
+  NOTARY_EVIDENCE_PUBLIC_KEY_HEX,
   "hex"
 );
 
@@ -75,7 +79,8 @@ function fitsSingleOutput(
 
 /** Read the daemon's evidence groups, preserving their starting output indexes. */
 export function readIdentityUpdateEvidence(
-  outputs: Output[]
+  outputs: Output[],
+  expectedSystemId?: string
 ): Map<number, IdentityUpdateEvidence> {
   let systemID: Buffer | undefined;
 
@@ -101,7 +106,6 @@ export function readIdentityUpdateEvidence(
         params.vData.length === 1 &&
         destination.type.eq(TxDestination.TYPE_PK) &&
         destination.data.toBuffer().equals(NOTARY_EVIDENCE_PUBLIC_KEY) &&
-
         // The outer master condition must use the same destination, with no
         // additional payload or alternative authorization.
         master.version.eqn(3) &&
@@ -125,7 +129,9 @@ export function readIdentityUpdateEvidence(
     const proofSystem = bytes.subarray(2, 22);
 
     requireCondition(
-      !systemID || systemID.equals(proofSystem),
+      (!systemID || systemID.equals(proofSystem)) &&
+        (!expectedSystemId ||
+          proofSystem.equals(fromBase58Check(expectedSystemId).hash)),
       "Identity upload evidence systems do not match."
     );
 
@@ -226,6 +232,10 @@ export function readIdentityUpdateEvidence(
     );
 
     groups.set(startIndex, { proof, outputIndexes });
+    requireCondition(
+      evidence[index + 1]?.bytes[1] !== MULTIPART_PROOF,
+      "Adjacent multipart identity uploads cannot be retrieved by the daemon."
+    );
   }
 
   return groups;

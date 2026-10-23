@@ -122,32 +122,48 @@ async function createVerusPayInvoice() {
 }
 ```
 
-### Verifying identity data uploads
+### Building and verifying identity updates locally
 
-Identity updates containing `signdata` require an `IdentityUpdateDataDecryptor` callback. The wallet authenticates and decrypts each encrypted descriptor and returns the raw plaintext as a `Buffer`; it must throw if authentication or decryption fails. This library does not implement decryption or require wallet private keys.
+`IdentityUpdateRequestDetails` now merges partial edits into the identity decoded from `rawIdentityTransaction`. Construction never calls `updateidentity` or `signdata`, and failures never fall back to those RPCs. Chain-state reads, funding, and broadcast remain separate. Historical content-multimap entries are cleared; explicitly requested ordinary entries and new upload references are retained. Protected currency/control flags, authority checks, and lock/unlock calculations follow the PBaaS rules. Updates require version 3 source and resulting identities with supported state flags; unverified legacy migrations fail before funding, including full-identity and supplied-template calls. Full-identity requests also undergo source-to-result transition checks and must supply a valid final lock state.
+
+Unsigned public and private data uploads require wallet callbacks:
 
 ```typescript
-import {
-  IdentityUpdateDataDecryptor,
-  verifyIdentityUpdateData,
-} from 'verusid-ts-client';
+import { LocalIdentityUploadCrypto } from 'verusid-ts-client';
 
-const decryptData: IdentityUpdateDataDecryptor = async (descriptor, context) => {
-  // Application-provided wallet adapter. Use context.encryptToAddress to find
-  // the recipient's viewing key for private uploads; otherwise descriptor.ivk
-  // contains the published viewing key. Authenticate descriptor.objectdata
-  // using descriptor.epk, and return the decrypted bytes without parsing them.
-  return wallet.decryptIdentityData(descriptor, context.encryptToAddress);
+const localUploadCrypto: LocalIdentityUploadCrypto = {
+  randomBytes: length => wallet.secureRandomBytes(length),
+  encrypt: async (plaintext, address) => {
+    // Mobile's native API returns these exact field names. The adapter must
+    // retain any temporary symmetric key privately for verification below.
+    const result = await wallet.encryptVerusData(address, plaintext.toString('hex'));
+    return {
+      epk: Buffer.from(result.ephemeralPublicKey, 'hex'),
+      ciphertext: Buffer.from(result.encryptedData, 'hex'),
+    };
+  },
+  createPublicRecipient: () => wallet.createFreshPublicUploadRecipient(),
+  decryptData: (descriptor, context) => wallet.authenticateAndDecryptUpload(descriptor, context),
 };
-
-await verifyIdentityUpdateData(requestDetails, unfundedTransactionHex, decryptData);
 ```
 
-Pass this callback as the final `decryptData` argument to `createUpdateIdentityTransaction`, or as `options.decryptData` to `createUpdateIdentityWithCurrencyTransferTransaction`. Both builders run verification before funding and calculating the dynamic fee allowance. The standalone verifier throws on mismatch and returns `true` on success.
+The `wallet` methods above are application adapters, not exports of this package. `encrypt` receives complete VDXF-tagged descriptor bytes. It must use a fresh Sapling ephemeral key for every call, the Sapling KDF, and authenticated ChaCha20-Poly1305 with the daemon's parameters. Return buffers without reversing them. `createPublicRecipient` returns `{ address, ivk: Buffer }` from genuinely fresh key material; its IVK is published. Private uploads do not need this callback. Verus and VRSCTEST use `zs` Sapling addresses.
 
-Verification follows each requested content key to its evidence, authenticates its descriptors through the callback, and compares uploaded bytes, item counts, ordering, and supplied salts with the request. It rejects unreferenced evidence, additional metadata, padding, and unnecessary multipart chunks. Public viewing keys are supplied on detached callback descriptors, including for child objects. Private uploads must decrypt using the requested recipient's key; published viewing or symmetric keys are rejected for those uploads.
+Pass the adapter as the final `localUploadCrypto` argument to `createUpdateIdentityTransaction` (after the existing `decryptData` argument), or as `options.localUploadCrypto` to `createUpdateIdentityWithCurrencyTransferTransaction`. Its `decryptData` is used automatically unless the existing explicit callback is supplied. A supplied `updateIdentityTransactionHex` needs only `decryptData`; it undergoes the same request and commitment checks. Requests must target the configured chain and remain unexpired. Local transaction expiry is capped by the request expiry. The selected expiry must be at least four blocks ahead to satisfy daemon relay policy; supplied templates must expire within 40 blocks and no later than the request expiry. Lock calculations use that exact expiry. Local templates select one height and expiry for the complete update, including any appended transfers. The default height is `getinfo.blocks` (the active chain); an explicit `currentHeight` must also be a trusted active tip. The shared lock rules preserve the daemon's inclusive unlock boundary, signed lock-delay normalization, and wrapping uint32 arithmetic. Full identity inputs describe final binary state, so they are validated without RPC-style normalization.
 
-Supply inline data instead of remote filenames. Per-item labels and MIME types discarded by the current typed request are rejected when returned as upload metadata. Single-item hash-only uploads are rejected because the daemon omits the hash vector needed to bind that evidence to the requested hash; hash-only items within a multi-item MMR are supported. This verifier checks upload content and encoding sizes. It does not recompute MMR commitments or authenticate embedded data signatures, and does not replace transaction funding or authorization validation.
+`verifyIdentityUpdateFunding(approval, candidateHex, signingInputs, lockContext)` and `signUpdateIdentityTransaction(hex, inputs, keys, approval, lockContext)` accept an optional `IdentityLockContext` of `{ chainId, nextBlockHeight }`. Obtain it independently from trusted current chain state before signing. Without it, verification requires the lock transition to be valid at **every** possible nonexpired inclusion height; clearing an elapsed countdown can therefore require this context. A claimed height inside an externally supplied receipt is never used. Neither method fetches or proves current UTXO state. The historical vARRR exception is implemented for heights 67,000–76,999; affected earlier states fail closed because their on-chain upgrade activation is unavailable.
+
+For an external private recipient, the wallet may request a temporary symmetric key from native encryption and retain it in memory keyed by the exact EPK/ciphertext. The decrypt callback must authenticate the ciphertext with that key, not return remembered plaintext. Clear temporary keys after the builder finishes or fails. Never return them to the SDK, publish them, or send them to RPC. Public uploads can decrypt using the IVK supplied on detached callback descriptors, including their children.
+
+The verifier checks all requested plaintext, metadata, salts, ordered leaf hashes, MMR roots, references, evidence coverage, and multipart structure before funding. SHA-256, SHA-256d, and personalized Blake2b object/MMR hashes are supported. Use inline bytes and explicitly enable `createmmr`. Supplied salts must be exactly 32 bytes per item. Hash-only leaves require a multi-item MMR. Data signatures, signature bindings, prior MMRs, remote filenames, and unsupported metadata are rejected.
+
+The primitives dependency and transitive resolution are pinned to `identity-registration` commit `381bb5803dbeaeb16029fbfe7cac810f989bb5c6`. `yarn update-verus-libs` follows that branch for primitives. Its MMR CLI parser now rejects bare strings, per-item metadata, prior MMRs, and `serializedbase64`; use `{ message: text }` or `{ serializedhex: hex }`. Single `messagebase64` uploads remain supported. The SDK also accepts already-decoded typed Buffer payloads locally, including MMR RAWSTRING/BASE64, without converting them back into RPC requests. These local inputs do not imply daemon CLI support.
+
+Descriptor and VDXF `fromJson`/`toJson` now use the lossless daemon representation: raw strings are hexadecimal, tagged bytes are numeric, and fields or sequences the daemon would drop or reorder are rejected. Native binary values, including tagged byte vectors and descriptor VDXF keys, remain usable in local uploads. The SDK preserves their bytes without a JSON round-trip and resolves compact FQN keys to ordinary VDXF keys. Use constructors/binary serialization when a value has no lossless JSON form; identity signing-policy checks also work with such content.
+
+Limits are 1,000,000 payload bytes, 4,096 total items, 1,500,000 evidence-output bytes, and 1,800,000 bytes for the final transaction. Identity/script limits also apply. Only one multipart upload group is produced per transaction because the daemon cannot reliably retrieve adjacent multipart groups. Evidence order and absolute output positions must survive funding. The dynamic fee allowance includes the daemon’s default storage charge of 1,000 atomic units per evidence-script byte. Custom chain or node fee policies may require an explicit cap. The allowance remains a ceiling, not a quote; callers can supply a lower `maxFee` and inspect the verified `deltas`/approval before signing.
+
+Standalone verification is available as `verifyIdentityUpdateData(request, hex, decryptData, expectedChainId?)`. It does not replace funding or identity-authorization checks. Retain the returned transaction and funding approval for signing; retain exact signed bytes and their transaction ID for broadcast retries instead of rebuilding and re-encrypting.
 
 ### Registering an identity
 

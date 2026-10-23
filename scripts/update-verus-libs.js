@@ -8,7 +8,7 @@ const dependencies = [
   {
     name: "verus-typescript-primitives",
     repository: "https://github.com/VerusCoin/verus-typescript-primitives.git",
-    ref: "HEAD"
+    ref: "refs/heads/identity-registration"
   },
   {
     name: "verusd-rpc-ts-client",

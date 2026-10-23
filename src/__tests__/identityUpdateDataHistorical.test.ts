@@ -5,14 +5,22 @@ import {
 } from "verus-typescript-primitives";
 import { verifyIdentityUpdateData } from "../identity/updateDataVerification";
 import { decryptHistoricalUpload } from "./fixtures/decryptIdentityUpdateData";
+import { historicalUploadPayloadRequest } from "./fixtures/historicalUploadRequest";
 import {
   TEST_ID_5_REQUEST_JSON,
   TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
 } from "./fixtures/verusid";
 
-test("rejects authenticated historical upload metadata omitted by the typed request", async () => {
-  const request = IdentityUpdateRequestDetails.fromCLIJson(
+test("rejects unsupported historical per-leaf metadata while parsing the request", () => {
+  expect(() => IdentityUpdateRequestDetails.fromCLIJson(
     TEST_ID_5_REQUEST_JSON,
+    {}
+  )).toThrow("MMR data items must contain exactly one supported data key");
+});
+
+test("rejects authenticated historical upload metadata absent from a payload-only request", async () => {
+  const request = IdentityUpdateRequestDetails.fromCLIJson(
+    historicalUploadPayloadRequest(TEST_ID_5_REQUEST_JSON),
     {}
   );
   const decrypted: DataDescriptor[] = [];
@@ -32,8 +40,8 @@ test("rejects authenticated historical upload metadata omitted by the typed requ
     return plaintext;
   };
 
-  // The historical daemon response includes per-item labels and MIME types,
-  // which PartialMMRData.fromCLIJson does not preserve. Accepting these fields
+  // The historical daemon response includes per-item labels and MIME types
+  // that this payload-only request does not authorize. Accepting these fields
   // would allow unrequested bytes to increase the calculated fee allowance.
   await expect(
     verifyIdentityUpdateData(

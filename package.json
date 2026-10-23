@@ -52,11 +52,11 @@
     "axios": "1.13.5",
     "bignumber.js": "9.1.0",
     "bn.js": "5.2.3",
-    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#36cf60817a8ff983b3f8b30f43b3f467fc064ccc",
+    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#381bb5803dbeaeb16029fbfe7cac810f989bb5c6",
     "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client#5d7155a10671415a7fd3054984b4591f5309fcf3"
   },
   "resolutions": {
-    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#36cf60817a8ff983b3f8b30f43b3f467fc064ccc",
+    "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#381bb5803dbeaeb16029fbfe7cac810f989bb5c6",
     "sha.js": "2.4.12",
     "minimatch": "3.1.4",
     "glob": "10.5.0",

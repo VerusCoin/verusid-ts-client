@@ -5,8 +5,10 @@ import BigNumber from "bignumber.js";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
 import { CreateIdentityRegistrationTransactionRequest, CreateNameReservationTransactionRequest, PreparedIdentityRegistrationTransaction, SignIdentityRegistrationTransactionArgs, MergeIdentityRegistrationTransactionsArgs, ResolveIdentityRegistrationRequest } from "./identity/registration";
 import { InspectIdentityRegistrationSignaturesArgs } from "./identity/registrationSigning";
+import { IdentityLockContext } from "./identity/identityLocks";
 import { IdentityUpdateFundingApproval } from "./identity/updateFundingVerification";
 import { IdentityUpdateDataDecryptor } from "./identity/updateDataVerification";
+import { LocalIdentityUploadCrypto } from "./identity/localUpdateData";
 export type CurrencyTransferOutput = {
     currencies: {
         [currency: string]: string | number;
@@ -31,6 +33,8 @@ export type IdentityUpdateCurrencyTransferOptions = {
     maxFee?: number;
     /** Required for data uploads; authenticates and decrypts the returned descriptors. */
     decryptData?: IdentityUpdateDataDecryptor;
+    /** Wallet encryption, randomness, and authenticated decryption for local uploads. */
+    localUploadCrypto?: LocalIdentityUploadCrypto;
     fundRawTransactionResult?: FundRawTransactionResponse["result"];
     currentHeight?: number;
     updateIdentityTransactionHex?: string;
@@ -197,9 +201,15 @@ declare class VerusIdInterface {
     private static completeIdentityUpdateTransaction;
     private static getIdentityDefinitionUtxo;
     private static validateIdentityPrimaryAddress;
+    /** Validate definitions returned for required revocation/recovery authorities. */
+    private validateIdentityUpdateAuthorities;
+    /**
+     * Build or verify an unfunded update against the raw identity being spent.
+     * Use one height/expiry context for identity edits, evidence, and verification.
+     */
     private prepareIdentityUpdateTransaction;
     createUpdateIdentityTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, maxFee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, updateIdentityTransactionHex?: string, parseVdxfObjects?: boolean, isTestnet?: boolean, // This parameter is only necessary if you pass in an IdentityUpdateRequestDetails
-    allowUnverifiedPrevouts?: boolean, decryptData?: IdentityUpdateDataDecryptor): Promise<IdentityUpdateTransactionResult>;
+    allowUnverifiedPrevouts?: boolean, decryptData?: IdentityUpdateDataDecryptor, localUploadCrypto?: LocalIdentityUploadCrypto): Promise<IdentityUpdateTransactionResult>;
     createUpdateIdentityWithCurrencyTransferTransaction(identity: Identity | IdentityUpdateRequestDetails, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, currencyTransferOutputs: CurrencyTransferOutput[], utxoList: GetAddressUtxosResponse["result"], options?: IdentityUpdateCurrencyTransferOptions): Promise<IdentityUpdateTransactionResult>;
     createRevokeIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<IdentityUpdateTransactionResult>;
     createRecoverIdentityTransaction(_identity: Identity, changeAddress: string, rawIdentityTransaction: string, identityTransactionHeight: number, utxoList?: GetAddressUtxosResponse["result"], chainIAddr?: string, fee?: number, fundRawTransactionResult?: FundRawTransactionResponse["result"], currentHeight?: number, allowUnverifiedPrevouts?: boolean): Promise<IdentityUpdateTransactionResult>;
@@ -209,7 +219,7 @@ declare class VerusIdInterface {
      * @param inputs A list of UTXOs that are being used as inputs for the transaction, in the order they appear in the unsigned tx
      * @param keys A list of WIF keys that correspond to the UTXOs in the inputs list, each utxo will be signed with each key in the list at the position of the utxo in the inputs list
      */
-    signUpdateIdentityTransaction(unsignedTxHex: string, inputs: GetAddressUtxosResponse["result"], keys: string[][], fundingApproval?: IdentityUpdateFundingApproval): string;
+    signUpdateIdentityTransaction(unsignedTxHex: string, inputs: GetAddressUtxosResponse["result"], keys: string[][], fundingApproval?: IdentityUpdateFundingApproval, lockContext?: IdentityLockContext): string;
     private createGenericEnvelope;
     private signGenericEnvelope;
     private verifyGenericEnvelope;

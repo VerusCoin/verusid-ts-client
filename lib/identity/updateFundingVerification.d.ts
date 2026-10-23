@@ -1,3 +1,4 @@
+import { IdentityLockContext } from "./identityLocks";
 import { Amounts, Output } from "./fundingPrimitives";
 export interface IdentityUpdateSigningInput {
     txid: string;
@@ -57,11 +58,14 @@ export declare function defaultIdentityUpdateFeeCap(unfundedTxHex: string, expli
 export declare function verifyIdentityDefinitionOutput(output: Output, expectedAddress: string, requireCanonicalAuthorization?: boolean): Amounts;
 /**
  * Verify local economic intent and currency conservation against retained
- * approval. This does not check signatures or current chain/UTXO state.
+ * approval. This does not fetch signatures or current chain/UTXO state.
+ * Supply independently trusted active-chain context for height-dependent locks;
+ * without it, the transition must be valid at every nonexpired inclusion height.
+ * Never obtain this context from the untrusted receipt or transaction expiry.
  */
-export declare function verifyIdentityUpdateFunding(approval: IdentityUpdateFundingApproval, candidateHex?: string, signingInputs?: IdentityUpdateSigningInput[]): true;
+export declare function verifyIdentityUpdateFunding(approval: IdentityUpdateFundingApproval, candidateHex?: string, signingInputs?: IdentityUpdateSigningInput[], lockContext?: IdentityLockContext): true;
 /**
  * Internal construction boundary: verify before freezing the approval.
  * The NODE_ENV=test fixture opt-out never produces a portable approval.
  */
-export declare function createIdentityUpdateFundingApproval(request: IdentityUpdateFundingRequest, inputs: IdentityUpdateSigningInput[], allowUnverifiedPrevouts: boolean): IdentityUpdateFundingApproval | undefined;
+export declare function createIdentityUpdateFundingApproval(request: IdentityUpdateFundingRequest, inputs: IdentityUpdateSigningInput[], allowUnverifiedPrevouts: boolean, lockContext?: IdentityLockContext): IdentityUpdateFundingApproval | undefined;

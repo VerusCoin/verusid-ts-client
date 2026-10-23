@@ -36,6 +36,8 @@ import {
   VdxfUniValue,
   VectorUint256Key,
   fromBase58Check,
+  hashData,
+  getMMRRoot,
   nameAndParentAddrToIAddr,
 } from "verus-typescript-primitives";
 import {
@@ -44,6 +46,8 @@ import {
   verifyIdentityUpdateFunding
 } from "../index";
 import { TEST_ID_3, VERUSTEST_I_ADDR } from "./fixtures/verusid";
+import { defaultIdentityUpdateFeeCap, identityUpdateFeeCap } from "../identity/updateFundingVerification";
+import { MAX_IDENTITY_UPDATE_TRANSACTION_BYTES } from "../identity/updateLimits";
 
 const CHAIN = VERUSTEST_I_ADDR;
 // The daemon reserves script overhead before splitting serialized evidence.
@@ -56,6 +60,22 @@ const NOTARY_PUBLIC_KEY = Buffer.from(
 
 const vdxf = (key: string, data: Buffer): Buffer =>
   new BufferDataVdxfObject(data.toString("hex"), key).toBuffer();
+
+test("includes the daemon's storage charge in the default upload fee allowance", () => {
+  const f = fixture([["storage ".repeat(1500)]]);
+  const storageBytes = f.tx.outs.slice(0, -1).reduce(
+    (sum: number, output: { script: Buffer }) => sum + output.script.length, 0
+  );
+  const cap = new BN(identityUpdateFeeCap(defaultIdentityUpdateFeeCap(f.tx.toHex())));
+  expect(cap.gte(new BN(storageBytes).muln(1000).addn(100000))).toBe(true);
+});
+
+test("rejects oversized transactions before signing even without a funding approval", () => {
+  const client = new VerusIdInterface(CHAIN, "https://offline.invalid");
+  expect(() => client.signUpdateIdentityTransaction(
+    "00".repeat(MAX_IDENTITY_UPDATE_TRANSACTION_BYTES + 1), [], []
+  )).toThrow(/size limit/);
+});
 
 function evidenceBytes(proof: CrossChainProof, multipart = false): Buffer {
   // Notary header: version/type, system, null outpoint, and supporting state.
@@ -137,6 +157,7 @@ function fixture(
   const plaintexts = new Map<string, Buffer>();
   const leaves: DataDescriptor[] = [];
   let ciphertextNumber = 0;
+  let publicRecipientNumber = 0;
 
   const encrypt = (
     plaintext: DataDescriptor,
@@ -157,7 +178,7 @@ function fixture(
       flags: DataDescriptor.FLAG_ENCRYPTED_DATA,
       objectdata: ciphertext,
       epk: Buffer.alloc(32, ciphertextNumber),
-      ...(publishViewingKey ? { ivk: Buffer.from(VIEWING_KEY) } : {}),
+      ...(publishViewingKey ? { ivk: Buffer.alloc(32, 7 + publicRecipientNumber++) } : {}),
     });
   };
 
@@ -225,16 +246,13 @@ function fixture(
         DataDescriptorKey.vdxfid
       ).toBuffer();
     } else {
-      // These tests verify MMR encoding and upload bytes, not root hashes.
-      const hashes = Buffer.concat([
-        Buffer.from([descriptors.length]),
-        Buffer.alloc(descriptors.length * 32)
-      ]);
+      const leafHashes = messages[group].map(message => hashData(Buffer.concat([Buffer.from(message), Buffer.alloc(32, 9)])));
+      const hashes = Buffer.concat([Buffer.from([descriptors.length]), ...leafHashes]);
       const mmr = new MMRDescriptor({
         version: new BN(1),
         objectHashType: EHashTypes.HASH_SHA256,
         mmrHashType: EHashTypes.HASH_BLAKE2BMMR,
-        mmrRoot: encrypt(new DataDescriptor({ objectdata: Buffer.alloc(32) })),
+        mmrRoot: encrypt(new DataDescriptor({ objectdata: getMMRRoot(leafHashes) })),
         mmrHashes: encrypt(
           new DataDescriptor({
             objectdata: vdxf(VectorUint256Key.vdxfid, hashes)
@@ -639,11 +657,13 @@ describe("identity upload evidence verification", () => {
           Buffer.concat([
             Buffer.from([2]),
             expectedHash,
-            Buffer.alloc(32),
+            hashData(Buffer.concat([Buffer.from("second"), Buffer.alloc(32, 9)])),
           ])
         ),
       })
     );
+    mmr.mmrRoot = f.encrypt(new DataDescriptor({objectdata: getMMRRoot([expectedHash,
+      hashData(Buffer.concat([Buffer.from("second"), Buffer.alloc(32, 9)]))])}));
     f.groups[0].chainObjects[0].data_vec = vdxf(
       MMRDescriptorKey.vdxfid,
       mmr.toBuffer()
@@ -686,153 +706,65 @@ describe("identity upload evidence verification", () => {
     }
   );
 
-  test.each([1, 2])(
-    "accepts requested signature evidence for %i uploaded items",
-    async count => {
-      const f = fixture([
-        Array.from({ length: count }, (_, index) => `item ${index}`)
-      ]);
-      addSignature(f);
+  test.each([1, 2])("rejects data signatures before decrypting %i items", async count => {
+    const f = fixture([Array.from({length: count}, (_, index) => `item ${index}`)]);
+    addSignature(f);
+    await expect(verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)).rejects.toThrow(/signature|signer/i);
+    expect(f.decrypt).not.toHaveBeenCalled();
+  });
 
-      await expect(
-        verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-      ).resolves.toBe(true);
-      expect(f.decrypt).toHaveBeenCalledTimes(count === 1 ? 4 : 7);
-    }
-  );
-
-  test("uses the object hash for a single signed MMR item regardless of requested MMR algorithm", async () => {
+  test("rejects a signer assigned without updating serialization flags", async () => {
     const f = fixture();
     const requested = [...f.request.signDataMap!.entries()][0][1];
-    (requested.data as any).mmrhashtype = new BN(EHashTypes.HASH_KECCAK);
-    addSignature(f);
-
-    // rpcwallet.cpp overrides mmrHashType with object hashType for one leaf.
-    await expect(
-      verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-    ).resolves.toBe(true);
-  });
-
-  test("rejects a multi-item signature with an object hash instead of the requested MMR hash", async () => {
-    const f = fixture([["first", "second"]]);
-    addSignature(f, signature => {
-      signature.hashType = new BN(EHashTypes.HASH_SHA256);
-    });
-
-    await expect(
-      verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-    ).rejects.toThrow(/signature/);
-  });
-
-  test("binds signature VDXF keys, normalized names, and hashes to the request", async () => {
-    const f = fixture();
-    const [key, requested] = [...f.request.signDataMap!.entries()][0];
-    f.request.signDataMap!.set(
-      key,
-      PartialSignData.fromCLIJson({
-        ...requested.toCLIJson(),
-        address: TEST_ID_3.identity.identityaddress,
-        vdxfkeys: [CHAIN],
-        vdxfkeynames: ["VRSC::Requested.Upload"],
-        boundhashes: ["03".repeat(32)],
-      })
-    );
-    addSignature(f);
-
-    await expect(
-      verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-    ).resolves.toBe(true);
-
-    const changed = [...f.request.signDataMap!.entries()][0][1];
-    changed.vdxfKeyNames![0] = Buffer.from("VRSC::Different.Upload");
-
-    await expect(
-      verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-    ).rejects.toThrow(/signature/);
-  });
-
-  test("retains signer and bindings assigned after request construction", async () => {
-    const f = fixture();
-    const [key, requested] = [...f.request.signDataMap!.entries()][0];
-    const signed = PartialSignData.fromCLIJson({
-      ...requested.toCLIJson(),
-      address: TEST_ID_3.identity.identityaddress,
-      vdxfkeys: [CHAIN],
-      vdxfkeynames: ["VRSC::Requested.Upload"],
-      boundhashes: ["03".repeat(32)],
-    });
-    f.request.signDataMap!.set(key, signed);
-    addSignature(f);
-
-    // Preserve the live fields even though their presence flags remain unset.
-    requested.address = signed.address;
-    requested.vdxfKeys = signed.vdxfKeys;
-    requested.vdxfKeyNames = signed.vdxfKeyNames;
-    requested.boundHashes = signed.boundHashes;
-    f.request.signDataMap!.set(key, requested);
+    requested.address = PartialSignData.fromCLIJson({message: "x", address: TEST_ID_3.identity.identityaddress}).address;
     expect(requested.flags.and(PartialSignData.CONTAINS_ADDRESS).isZero()).toBe(true);
-    expect(
-      requested.flags.and(PartialSignData.CONTAINS_BOUNDHASHES).isZero()
-    ).toBe(true);
-
-    await expect(
-      verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-    ).resolves.toBe(true);
-
-    requested.boundHashes = [Buffer.alloc(32, 4)];
-
-    await expect(
-      verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-    ).rejects.toThrow(/signature/);
+    await expect(verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)).rejects.toThrow(/signature|signer/i);
+    expect(f.decrypt).not.toHaveBeenCalled();
   });
 
-  test.each([
-    ["daemon ASCII folding", "vrsc::Évidence", true],
-    ["Unicode folding", "vrsc::évidence", false],
-  ] as const)("checks signature key names using %s", async (_, name, valid) => {
+  test.each(["zero", "reused"])("rejects a %s encryption EPK", async kind => {
     const f = fixture();
-    const [key, requested] = [...f.request.signDataMap!.entries()][0];
-    f.request.signDataMap!.set(
-      key,
-      PartialSignData.fromCLIJson({
-        ...requested.toCLIJson(),
-        vdxfkeynames: ["VRSC::ÉVIDENCE"],
-      })
-    );
-    addSignature(f, signature => {
-      // The daemon lowercases ASCII bytes while retaining the UTF-8 É bytes.
-      signature.vdxfKeyNames = [name];
-    });
-
-    const verification = verifyIdentityUpdateData(
-      f.request,
-      f.tx.toHex(),
-      f.decrypt
-    );
-
-    if (valid) await expect(verification).resolves.toBe(true);
-    else await expect(verification).rejects.toThrow(/signature/);
+    const encoded = new VDXFDataDescriptor();
+    encoded.fromBuffer(Buffer.from(f.links[f.keys[0]][0], "hex"));
+    f.leaves[0].epk = kind === "zero" ? Buffer.alloc(32) : encoded.dataDescriptor.epk;
+    f.groups[0].chainObjects[0].data_vec = new VDXFDataDescriptor(f.leaves[0], DataDescriptorKey.vdxfid).toBuffer();
+    replaceOnlyEvidenceGroup(f);
+    await expect(verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)).rejects.toThrow(/encrypted/);
   });
 
-  test.each(["signer", "hash algorithm", "bound hash", "signature padding"])(
-    "rejects signature evidence with unexpected %s",
-    async kind => {
-      const f = fixture();
-      addSignature(f, signature => {
-        if (kind === "signer") signature.identityID = CHAIN;
-        if (kind === "hash algorithm")
-          signature.hashType = new BN(EHashTypes.HASH_BLAKE2BMMR);
-        if (kind === "bound hash")
-          signature.boundHashes.push(Buffer.alloc(32, 3));
-        if (kind === "signature padding")
-          signature.signatureAsVch = Buffer.alloc(8 + 25 * 66 + 1, 8);
-      });
+  test("binds evidence to the configured chain", async () => {
+    const f = fixture();
+    await expect(verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt, TEST_ID_3.identity.identityaddress))
+      .rejects.toThrow(/systems/);
+    expect(f.decrypt).not.toHaveBeenCalled();
+  });
 
-      await expect(
-        verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)
-      ).rejects.toThrow(/signature/);
-    }
-  );
+  test("rejects reuse of a public viewing key across content keys", async () => {
+    const f = fixture([["one"], ["two"]]);
+    const first = new VDXFDataDescriptor();
+    const second = new VDXFDataDescriptor();
+    first.fromBuffer(Buffer.from(f.links[f.keys[0]][0], "hex"));
+    second.fromBuffer(Buffer.from(f.links[f.keys[1]][0], "hex"));
+    second.dataDescriptor.ivk = first.dataDescriptor.ivk;
+    f.links[f.keys[1]][0] = second.toBuffer().toString("hex");
+    f.replaceIdentity();
+    await expect(verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)).rejects.toThrow(/viewing keys/);
+  });
+
+  test.each(["root", "leaf hash"])("rejects a corrupted MMR %s despite valid plaintext", async kind => {
+    const f = fixture([["first", "second", "third"]]);
+    const taggedMMR = new BufferDataVdxfObject();
+    taggedMMR.fromBuffer(f.groups[0].chainObjects[0].data_vec);
+    const mmr = new MMRDescriptor();
+    mmr.fromBuffer(taggedMMR.toDataBuffer());
+    const descriptor = kind === "root" ? mmr.mmrRoot : mmr.mmrHashes;
+    const key = descriptor.objectdata.toString("hex");
+    const plain = new VDXFDataDescriptor();
+    plain.fromBuffer(f.plaintexts.get(key)!);
+    plain.dataDescriptor.objectdata[plain.dataDescriptor.objectdata.length - 1] ^= 1;
+    f.plaintexts.set(key, plain.toBuffer());
+    await expect(verifyIdentityUpdateData(f.request, f.tx.toHex(), f.decrypt)).rejects.toThrow(/MMR.*(root|hash)/);
+  });
 
   test("retains requested bytes while an asynchronous wallet callback is pending", async () => {
     const f = fixture();

@@ -8,5 +8,5 @@ export type IdentityUpdateEvidence = {
     outputIndexes: number[];
 };
 /** Read the daemon's evidence groups, preserving their starting output indexes. */
-export declare function readIdentityUpdateEvidence(outputs: Output[]): Map<number, IdentityUpdateEvidence>;
+export declare function readIdentityUpdateEvidence(outputs: Output[], expectedSystemId?: string): Map<number, IdentityUpdateEvidence>;
 export {};

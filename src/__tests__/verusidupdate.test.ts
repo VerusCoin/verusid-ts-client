@@ -7,6 +7,15 @@ import { TEST_REQUEST_ID } from './fixtures/genericenvelope';
 import { GetAddressUtxosResponse } from 'verus-typescript-primitives';
 import { AddressUtxos, IdentityUpdateTransactionResult } from '../VerusIdInterface';
 import { decryptHistoricalUpload } from './fixtures/decryptIdentityUpdateData';
+import { historicalUploadPayloadRequest } from './fixtures/historicalUploadRequest';
+
+// Keep the historical upload bytes while selecting an expiry within the test's
+// preparation window, so these cases reach their intended content/txid checks.
+const historicalUploadTemplate = (() => {
+  const tx = Transaction.fromHex(TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX, networks.verus);
+  tx.expiryHeight = 18167 + 20;
+  return tx.toHex();
+})();
 
 const withChainInfo = (utxos: AddressUtxos): GetAddressUtxosResponse['result'] => ({
   utxos,
@@ -33,11 +42,29 @@ const expectSelectedInputOrder = (result: IdentityUpdateTransactionResult) => {
 };
 
 describe('Creates VerusID update transactions', () => {
+  // The historical revoke/recover fixtures reference test@ and test3@.
+  // Resolve only those named authorities; every other RPC still fails closed.
+  const recoveryAuthority = Identity.fromJson(TEST_ID_3.identity);
+  recoveryAuthority.name = "test3";
+  recoveryAuthority.setRecovery(recoveryAuthority.getIdentityAddress());
+  recoveryAuthority.setRevocation(recoveryAuthority.getIdentityAddress());
+  const authorityDefinitions = new Map([
+    [TEST_ID_2.identity.identityaddress, Identity.fromJson(TEST_ID_2.identity)],
+    [recoveryAuthority.getIdentityAddress(), recoveryAuthority],
+  ]);
   const VerusId = new VerusIdInterface(
     VERUSTEST_I_ADDR,
     "http://localhost",
     undefined,
-    async req => { throw new Error('Unexpected RPC request: ' + req.method); }
+    async req => {
+      if (req.method === "getidentity" && req.params?.length === 1) {
+        const authority = authorityDefinitions.get(req.params[0] as string);
+        if (authority) return {
+          id: req.id, error: null, result: { identity: authority.toJson() },
+        } as any;
+      }
+      throw new Error('Unexpected RPC request: ' + req.method);
+    }
   );
   const TRANSFER_SATOSHIS = "100000";
   const RESERVE_TRANSFER_FEE_SATOSHIS = "20000";
@@ -884,7 +911,7 @@ describe('Creates VerusID update transactions', () => {
 
   test('catches an identity update with a different cmm key', async () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
-      TEST_ID_5_REQUEST_JSON_DIFF_KEY,
+      historicalUploadPayloadRequest(TEST_ID_5_REQUEST_JSON_DIFF_KEY),
       {
         requestid: TEST_REQUEST_ID.toJson(),
         expiryheight: new BN("1700000000", 10).toString()
@@ -904,7 +931,7 @@ describe('Creates VerusID update transactions', () => {
         0.0001,
         TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
         18167,
-        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        historicalUploadTemplate,
         true,
         true,
         ALLOW_UNVERIFIED_PREVOUTS,
@@ -914,12 +941,12 @@ describe('Creates VerusID update transactions', () => {
       error = e;
     }
 
-    expect(error).toBeDefined();
+    expect((error as Error)?.message).toBe("Unexpected contentmultimap entries in identity transaction");
   });
 
   test('catches update identity request txid mismatch', async () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
-      TEST_ID_5_REQUEST_JSON,
+      historicalUploadPayloadRequest(TEST_ID_5_REQUEST_JSON),
       {
         requestid: TEST_REQUEST_ID.toJson(),
         expiryheight: new BN("1700000000", 10).toString()
@@ -940,7 +967,7 @@ describe('Creates VerusID update transactions', () => {
         0.0001,
         TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
         18167,
-        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        historicalUploadTemplate,
         true,
         true,
         ALLOW_UNVERIFIED_PREVOUTS,
@@ -956,7 +983,7 @@ describe('Creates VerusID update transactions', () => {
 
   test('catches an identity update with different primary addresses', async () => {
     const reqDet = IdentityUpdateRequestDetails.fromCLIJson(
-      TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS,
+      historicalUploadPayloadRequest(TEST_ID_5_REQUEST_JSON_DIFF_PRIM_ADDRS),
       {
         requestid: TEST_REQUEST_ID.toJson(),
         expiryheight: new BN("1700000000", 10).toString()
@@ -976,7 +1003,7 @@ describe('Creates VerusID update transactions', () => {
         0.0001,
         TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
         18167,
-        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        historicalUploadTemplate,
         true,
         true,
         ALLOW_UNVERIFIED_PREVOUTS,
@@ -986,7 +1013,7 @@ describe('Creates VerusID update transactions', () => {
       error = e;
     }
 
-    expect(error).toBeDefined();
+    expect((error as Error)?.message).toBe("Identity update request changes or unchanged identity properties do not match the identity transaction.");
   });
 
   test('catches an unrequested cmm update', async () => {
@@ -1011,7 +1038,7 @@ describe('Creates VerusID update transactions', () => {
         0.0001,
         TEST_ID_5_SIGNDATA_UPDATE_FUNDED_TX,
         18167,
-        TEST_ID_5_SIGNDATA_UPDATE_UNFUNDED_TX,
+        historicalUploadTemplate,
         true,
         true,
         ALLOW_UNVERIFIED_PREVOUTS,

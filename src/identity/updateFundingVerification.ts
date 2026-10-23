@@ -1,6 +1,14 @@
 import BigNumber from "bignumber.js";
 import { ECPair, networks } from "@bitgo/utxo-lib";
 import { validateIdentityDefinition } from "./identityValidation";
+import { validateSupportedIdentityUpdateState } from "./localIdentityUpdate";
+import { validateIdentityUpdateTransitionInvariants } from "./fullIdentityUpdateValidation";
+import {
+  IdentityLockContext,
+  validateIdentityLockTransition,
+  validateIdentityLocksWithoutHeight,
+} from "./identityLocks";
+import { validateIdentityUpdateTransactionSize } from "./updateLimits";
 import {
   EVALS,
   Identity,
@@ -117,6 +125,7 @@ export function defaultIdentityUpdateFeeCap(
   const planned = transaction(unfundedTxHex);
   let identityUnits = 0;
   let largeScriptUnits = 0;
+  let storageBytes = 0;
 
   for (const output of planned.outs as Output[]) {
     if (output.script.length > 1666) {
@@ -124,6 +133,11 @@ export function defaultIdentityUpdateFeeCap(
     }
 
     try {
+      const smart = parseScript(SmartTransactionScript, output.script);
+      if (smart.paramsOptCC.evalCode.eqn(EVALS.EVAL_NOTARY_EVIDENCE)) {
+        storageBytes += output.script.length;
+        continue;
+      }
       const id = parseScript(IdentityScript, output.script).getIdentity();
 
       // Measure serialized multimap content separately from the base identity.
@@ -155,6 +169,11 @@ export function defaultIdentityUpdateFeeCap(
   // Explicit native transfer fees are added before converting back to coins.
   const cap = amount(explicitNativeFee)
     .plus(new BigNumber(units).times(10000))
+    // GetMinRelayFeeForOutputs charges the complete evidence scripts:
+    // bytes * (default storage factor 6 * export fee 1,000,000) / 6,000.
+    // Use protocol defaults for a bounded allowance, never an RPC-proposed cap.
+    // Custom chain/node fees can require an explicitly approved maxFee.
+    .plus(new BigNumber(storageBytes).times(1000))
     .dividedBy("100000000")
     .toNumber();
   identityUpdateFeeCap(cap);
@@ -173,7 +192,16 @@ export function verifyIdentityDefinitionOutput(
   );
 
   const decoded = parseScript(IdentityScript, output.script).getIdentity();
-  if (requireCanonicalAuthorization) validateIdentityDefinition(decoded);
+  validateSupportedIdentityUpdateState(decoded);
+  if (requireCanonicalAuthorization) {
+    validateIdentityDefinition(decoded);
+    const smart = parseScript(SmartTransactionScript, output.script);
+    requireCondition(
+      smart.paramsOptCC.toChunk().length + 1 +
+        smart.masterOptCC.toChunk().length < 6000,
+      "Identity definition condition exceeds the daemon size limit."
+    );
+  }
   requireCondition(
     decoded.getIdentityAddress() === expectedAddress &&
       (!requireCanonicalAuthorization ||
@@ -334,7 +362,8 @@ function verify(
   approval: UpdateApproval,
   candidateHex: string,
   signingInputs?: IdentityUpdateSigningInput[],
-  trustedInputs?: IdentityUpdateSigningInput[]
+  trustedInputs?: IdentityUpdateSigningInput[],
+  lockContext?: IdentityLockContext
 ): true {
   validAddress(approval.systemID, true);
   validAddress(approval.changeAddress);
@@ -350,6 +379,8 @@ function verify(
     "Identity update fee exceeds its approval."
   );
 
+  validateIdentityUpdateTransactionSize(candidateHex);
+  validateIdentityUpdateTransactionSize(approval.unfundedTxHex);
   const candidate = verifyFundingTransaction(funded, candidateHex);
   const unfunded = transaction(approval.unfundedTxHex);
   verifyTransparentTransaction(unfunded);
@@ -382,6 +413,7 @@ function verify(
   });
   const incoming: Amounts = new Map();
   let identityCount = 0;
+  let sourceIdentity: Identity | undefined;
 
   prevouts.forEach((prevout, index) => {
     const { txid, vout, output } = prevout;
@@ -401,6 +433,7 @@ function verify(
     if (txid === approval.identity.txid && vout === approval.identity.vout) {
       identityCount++;
       verifyIdentityDefinitionOutput(output, approval.identity.identityAddress);
+      sourceIdentity = parseScript(IdentityScript, output.script).getIdentity();
     } else {
       add(incoming, fundingOutput(output, approval.systemID, prevout.address));
     }
@@ -417,6 +450,7 @@ function verify(
   const actualExplicitFees: Amounts = new Map();
   let plannedIndex = 0;
   let identityOutputs = 0;
+  let resultingIdentity: Identity | undefined;
   const onlyApproved = candidate.clone();
   onlyApproved.ins = [];
   onlyApproved.outs = [];
@@ -440,7 +474,10 @@ function verify(
 
       plannedIndex++;
       onlyApproved.outs.push(output);
-      if (decoded.identity) identityOutputs++;
+      if (decoded.identity) {
+        identityOutputs++;
+        resultingIdentity = parseScript(IdentityScript, output.script).getIdentity();
+      }
       add(outgoing, decoded.values);
       add(actualExplicitFees, decoded.fees);
     } else {
@@ -459,6 +496,16 @@ function verify(
       onlyApproved.toHex() === unfunded.toHex(),
     "Identity funding changed its approved outputs or transaction header."
   );
+  // A receipt is not evidence of current height. Use independently trusted
+  // context, or prove the transition valid throughout its possible lifetime.
+  validateIdentityUpdateTransitionInvariants(sourceIdentity!, resultingIdentity!);
+  if (lockContext !== undefined) {
+    requireCondition(lockContext.chainId === approval.systemID,
+      "Identity lock context does not match the approved chain.");
+    validateIdentityLockTransition(sourceIdentity!, resultingIdentity!, lockContext, unfunded.expiryHeight);
+  } else {
+    validateIdentityLocksWithoutHeight(sourceIdentity!, resultingIdentity!, approval.systemID, unfunded.expiryHeight);
+  }
 
   sameAmounts(
     actualExplicitFees,
@@ -493,7 +540,8 @@ function verifyFundingApproval(
   receipt: IdentityUpdateFundingApproval,
   candidateHex: string,
   signingInputs?: IdentityUpdateSigningInput[],
-  trustedInputs?: IdentityUpdateSigningInput[]
+  trustedInputs?: IdentityUpdateSigningInput[],
+  lockContext?: IdentityLockContext
 ): true {
   requireCondition(
     receipt && typeof receipt === "object",
@@ -528,19 +576,23 @@ function verifyFundingApproval(
     },
   };
 
-  return verify(funded, approval, candidateHex, signingInputs, trustedInputs);
+  return verify(funded, approval, candidateHex, signingInputs, trustedInputs, lockContext);
 }
 
 /**
  * Verify local economic intent and currency conservation against retained
- * approval. This does not check signatures or current chain/UTXO state.
+ * approval. This does not fetch signatures or current chain/UTXO state.
+ * Supply independently trusted active-chain context for height-dependent locks;
+ * without it, the transition must be valid at every nonexpired inclusion height.
+ * Never obtain this context from the untrusted receipt or transaction expiry.
  */
 export function verifyIdentityUpdateFunding(
   approval: IdentityUpdateFundingApproval,
   candidateHex = approval.txHex,
-  signingInputs?: IdentityUpdateSigningInput[]
+  signingInputs?: IdentityUpdateSigningInput[],
+  lockContext?: IdentityLockContext
 ): true {
-  return verifyFundingApproval(approval, candidateHex, signingInputs);
+  return verifyFundingApproval(approval, candidateHex, signingInputs, undefined, lockContext);
 }
 
 function freeze<T>(value: T): T {
@@ -558,7 +610,8 @@ function freeze<T>(value: T): T {
 export function createIdentityUpdateFundingApproval(
   request: IdentityUpdateFundingRequest,
   inputs: IdentityUpdateSigningInput[],
-  allowUnverifiedPrevouts: boolean
+  allowUnverifiedPrevouts: boolean,
+  lockContext?: IdentityLockContext
 ): IdentityUpdateFundingApproval | undefined {
   assertUnverifiedPrevoutsAllowed(allowUnverifiedPrevouts);
 
@@ -576,7 +629,8 @@ export function createIdentityUpdateFundingApproval(
     approval,
     approval.txHex,
     inputs,
-    allowUnverifiedPrevouts ? inputs : undefined
+    allowUnverifiedPrevouts ? inputs : undefined,
+    lockContext
   );
 
   return allowUnverifiedPrevouts ? undefined : freeze(approval);
