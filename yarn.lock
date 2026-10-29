@@ -338,9 +338,9 @@
     "@bitgo/blake2b-wasm" "^3.0.1"
     nanoassert "^2.0.0"
 
-"@bitgo/utxo-lib@git+https://github.com/VerusCoin/BitGoJS.git#2d3240429b7664fb01ca3f0f9e1c2b6da803f68d":
+"@bitgo/utxo-lib@git+https://github.com/VerusCoin/BitGoJS.git#4d8caa6d1d25ade1dbf91ec2bf79ef173d2316eb":
   version "1.9.6"
-  resolved "git+https://github.com/VerusCoin/BitGoJS.git#2d3240429b7664fb01ca3f0f9e1c2b6da803f68d"
+  resolved "git+https://github.com/VerusCoin/BitGoJS.git#4d8caa6d1d25ade1dbf91ec2bf79ef173d2316eb"
   dependencies:
     "@bitgo/blake2b" "3.0.1"
     "@noble/curves" "1.9.7"
