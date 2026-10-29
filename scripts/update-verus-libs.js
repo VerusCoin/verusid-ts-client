@@ -8,12 +8,12 @@ const dependencies = [
   {
     name: "verus-typescript-primitives",
     repository: "https://github.com/VerusCoin/verus-typescript-primitives.git",
-    ref: "refs/heads/identity-registration"
+    ref: "refs/heads/master"
   },
   {
     name: "verusd-rpc-ts-client",
     repository: "https://github.com/VerusCoin/verusd-rpc-ts-client",
-    ref: "HEAD"
+    ref: "refs/heads/main"
   },
   {
     name: "@bitgo/utxo-lib",

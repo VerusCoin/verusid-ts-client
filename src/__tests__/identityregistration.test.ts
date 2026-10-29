@@ -20,6 +20,7 @@ import {
   nameAndParentAddrToIAddr,
   OptCCParams,
   ReserveTransfer,
+  SaplingPaymentAddress,
   SmartTransactionScript,
   TokenOutput,
   TxDestination,
@@ -28,6 +29,7 @@ import {
   CreateIdentityRegistrationTransactionRequest,
   VerusIdInterface,
 } from "../index";
+import { paymentOutput } from "../identity/registrationTransaction";
 
 const SYSTEM = nameAndParentAddrToIAddr("VRSC");
 const TOKEN = nameAndParentAddrToIAddr("community", SYSTEM);
@@ -748,4 +750,235 @@ describe("public identity registration builders", () => {
       h.client.validateIdentityRegistrationTransaction(prepared, broken.toHex())
     ).toThrow();
   });
+});
+
+// Use real reserve scripts so their serialized sizes, change and signatures
+// exercise the public builder without sharing its relay-fee calculation.
+function reserveFunding(
+  h: ReturnType<typeof harness>,
+  sources: Array<{ currencies: number; native: number }>
+) {
+  let nextCurrency = 1;
+  h.transactions.clear();
+  h.request.funding = sources.map(({ currencies, native }, index) => {
+    const values: Record<string, string> = { [SYSTEM]: String(native) };
+    for (let i = 0; i < currencies; i++) {
+      const id = Buffer.alloc(20, 0x42);
+      id.writeUInt32LE(nextCurrency++, 0);
+      values[new IdentityID(id).toAddress()!] = "1";
+    }
+    const output = paymentOutput(address, values, SYSTEM, "change");
+    const builder = new TransactionBuilder(networks.verus);
+    builder.setVersion(4);
+    builder.setVersionGroupId(0x892f2085);
+    builder.setExpiryHeight(500);
+    builder.addInput(Buffer.alloc(32, index + 60), 0);
+    builder.addOutput(Buffer.from(output.scriptHex, "hex"), native);
+    const tx = builder.buildIncomplete();
+    h.transactions.set(tx.getId(), { tx, height: 10 });
+    return { txid: tx.getId(), vout: 0 };
+  });
+}
+
+describe("registration relay fees", () => {
+  test.each([
+    [69, 1999, "10000"],
+    [70, 2027, "20000"],
+    [140, 3987, "20000"],
+    [141, 4015, "30000"],
+  ])(
+    "prices %i-currency commitment change from its actual script",
+    async (count, size, fee) => {
+      const h = harness();
+      reserveFunding(h, [{ currencies: count as number, native: 200000000 }]);
+      const { transaction } = await h.client.createNameReservationTransaction(
+        h.request
+      );
+      const change = transaction.outputPlan.find(
+        (output) => output.role === "change"
+      )!;
+      expect(Buffer.from(change.scriptHex, "hex").length).toBe(size);
+      expect(transaction.nativeFee).toBe(fee);
+      expect(transaction.quote.commitmentFee).toBe(fee);
+      expect(transaction.quote.totalOperationRequired[SYSTEM]).toBe(
+        String(100000000 + Number(fee))
+      );
+      expect(transaction.quote.nativeFee).toBe("100000000");
+      expect(change.value).toBe(String(200000000 - Number(fee)));
+      const signed = h.client.signIdentityRegistrationTransaction({
+        transaction,
+        keys: transaction.prevouts.map(() => [wif]),
+      });
+      expect(
+        h.client.validateIdentityRegistrationTransaction(
+          transaction,
+          signed.hex
+        )
+      ).toMatchObject({ valid: true, signingStatus: "complete" });
+    }
+  );
+
+  test("preserves an explicitly approved higher commitment fee", async () => {
+    const h = harness();
+    reserveFunding(h, [{ currencies: 75, native: 200000000 }]);
+    const { transaction } = await h.client.createNameReservationTransaction({
+      ...h.request,
+      commitmentFee: "50000",
+    });
+    expect(transaction.nativeFee).toBe("50000");
+    expect(transaction.quote.totalOperationRequired[SYSTEM]).toBe("100050000");
+  });
+
+  test("applies the base fee before selecting funding for a zero-fee request", async () => {
+    const h = harness();
+    const { transaction } = await h.client.createNameReservationTransaction({
+      ...h.request,
+      commitmentFee: "0",
+    });
+    expect(transaction.nativeFee).toBe("10000");
+    expect(transaction.quote.totalOperationRequired[SYSTEM]).toBe("100010000");
+  });
+
+  test("retains the paid commitment fee in the reveal's combined quote", async () => {
+    const h = harness();
+    reserveFunding(h, [{ currencies: 75, native: 200000000 }]);
+    const { commitment, reveal } = await commitAndConfirm(h);
+    const prepared = await h.client.createIdentityRegistrationTransaction({
+      ...reveal,
+      commitmentFee: commitment.transaction.quote.commitmentFee,
+    });
+    expect(prepared.quote.commitmentFee).toBe("20000");
+    expect(prepared.quote.totalOperationRequired[SYSTEM]).toBe("100020000");
+    expect(prepared.nativeFee).toBe("100000000");
+    expect(prepared.quote.totalRequired[SYSTEM]).toBe("100000000");
+  });
+
+  test("returns the final quote when additional funding raises the fee twice", async () => {
+    const h = harness();
+    reserveFunding(h, [
+      { currencies: 75, native: 10000 },
+      { currencies: 75, native: 10000 },
+      { currencies: 0, native: 200000000 },
+    ]);
+    let rejected: any;
+    try {
+      await h.client.createNameReservationTransaction({
+        ...h.request,
+        approvedCosts: { [SYSTEM]: "100010000" },
+      });
+    } catch (error) {
+      rejected = error;
+    }
+    expect(rejected).toMatchObject({
+      code: "COST_LIMIT_EXCEEDED",
+      details: {
+        quote: { commitmentFee: "30000" },
+        requiredCosts: { [SYSTEM]: "100030000" },
+      },
+    });
+    const { transaction } = await h.client.createNameReservationTransaction({
+      ...h.request,
+      approvedCosts: rejected.details.requiredCosts,
+    });
+    expect(transaction.prevouts).toHaveLength(3);
+    expect(transaction.nativeFee).toBe("30000");
+    expect(transaction.quote).toEqual(rejected.details.quote);
+    expect(h.calls).not.toContain("sendrawtransaction");
+  });
+
+  test("rechecks funding for both stages after increasing the commitment fee", async () => {
+    const h = harness();
+    reserveFunding(h, [{ currencies: 75, native: 100010000 }]);
+    await expect(
+      h.client.createNameReservationTransaction(h.request)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_FUNDS" });
+  });
+
+  test("rejects an older prepared commitment whose fee is below the relay floor", async () => {
+    const h = harness();
+    reserveFunding(h, [{ currencies: 75, native: 200000000 }]);
+    const { transaction } = await h.client.createNameReservationTransaction(
+      h.request
+    );
+    const stale = JSON.parse(JSON.stringify(transaction));
+    const tx = Transaction.fromHex(stale.txHex, networks.verus);
+    tx.outs[1].value += 10000;
+    stale.txHex = stale.hex = tx.toHex();
+    stale.outputPlan[1].value = String(tx.outs[1].value);
+    stale.outputPlan[1].values[SYSTEM] = String(tx.outs[1].value);
+    stale.nativeFee = stale.quote.commitmentFee = "10000";
+    stale.quote.totalOperationRequired[SYSTEM] = "100010000";
+    expect(() =>
+      h.client.signIdentityRegistrationTransaction({
+        transaction: stale,
+        keys: [["invalid-wif"]],
+      })
+    ).toThrow(expect.objectContaining({ code: "INSUFFICIENT_RELAY_FEE" }));
+  });
+
+  test("quotes a reveal's identity fee factor without raising an approved cap", async () => {
+    const h = harness(2);
+    const { reveal } = await commitAndConfirm(h);
+    const recipient = require("./fixtures/local-upload/public-recipient.json");
+    const identity = Identity.fromJson(h.identity);
+    identity.privateAddresses = Array.from({ length: 110 }, () =>
+      SaplingPaymentAddress.fromAddressString(recipient.address)
+    );
+    let rejected: any;
+    try {
+      await h.client.createIdentityRegistrationTransaction({
+        ...reveal,
+        identity,
+        approvedCosts: { [SYSTEM]: "1000000", [TOKEN]: "100000000" },
+      });
+    } catch (error) {
+      rejected = error;
+    }
+    expect(rejected).toMatchObject({
+      code: "COST_LIMIT_EXCEEDED",
+      details: {
+        quote: {
+          nativeFee: "1090000",
+          importFee: "1000000",
+          registrationOffer: "100000000",
+          totalRequired: { [SYSTEM]: "1090000", [TOKEN]: "100000000" },
+          totalOperationRequired: { [SYSTEM]: "1100000", [TOKEN]: "100000000" },
+        },
+        requiredCosts: { [SYSTEM]: "1090000", [TOKEN]: "100000000" },
+      },
+    });
+    const prepared = await h.client.createIdentityRegistrationTransaction({
+      ...reveal,
+      identity,
+      approvedCosts: rejected.details.requiredCosts,
+    });
+    expect(prepared.nativeFee).toBe("1090000");
+    const signed = h.client.signIdentityRegistrationTransaction({
+      transaction: prepared,
+      keys: prepared.prevouts.map(() => [wif]),
+    });
+    expect(
+      h.client.validateIdentityRegistrationTransaction(prepared, signed.hex)
+    ).toMatchObject({ valid: true, signingStatus: "complete" });
+  });
+
+  test.each([undefined, 2])(
+    "applies the base relay floor to low-price reveals (%s)",
+    async (proof) => {
+      const h = harness(proof);
+      if (proof) h.native.idimportfees = 0.00001;
+      else h.native.idregistrationfees = 0.00001;
+      const { reveal } = await commitAndConfirm(h);
+      const prepared = await h.client.createIdentityRegistrationTransaction(
+        reveal
+      );
+      expect(prepared.nativeFee).toBe("10000");
+      expect(prepared.quote.totalRequired[SYSTEM]).toBe("10000");
+      expect(prepared.quote.totalOperationRequired[SYSTEM]).toBe("20000");
+      expect(prepared.quote.importFee).toBe(proof ? "1000" : "0");
+      expect(prepared.quote.registrationOffer).toBe(
+        proof ? "100000000" : "1000"
+      );
+    }
+  );
 });

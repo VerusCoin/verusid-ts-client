@@ -7,7 +7,7 @@ export interface ResolveIdentityRegistrationRequest extends IdentityRegistration
     referralID?: string;
     /** Defaults to the chain's block-time-derived expiry delta (20 through 60). */
     expiryDelta?: number;
-    /** All costs are atomic integer strings. */
+    /** Commitment fee in atomic units, encoded as an integer string. */
     commitmentFee?: string;
     offer?: string;
 }
@@ -26,14 +26,14 @@ export interface IdentityReservationRecord {
     readonly systemID: string;
     readonly rootSystemName: string;
     readonly fullName: string;
-    /** Serialized SHA256d hash byte order, not daemon displayed uint256 hex. */
+    /** SHA256d commitment hash in serialized byte order. */
     readonly commitmentHashHex: string;
     readonly controller: string;
     readonly authorizationID?: string;
 }
 export interface CreateNameReservationTransactionRequest extends ResolveIdentityRegistrationRequest {
     controller: string;
-    /** Securely generated nonzero 32-byte salt in serialized/internal order. Never generated implicitly. */
+    /** Caller-generated, secure, nonzero 32-byte salt in serialized byte order. */
     salt: Buffer;
     funding: RegistrationFundingInput[];
     changeAddress: string;
@@ -45,8 +45,9 @@ export interface PreparedIdentityRegistrationTransaction extends FundedRegistrat
     hex: string;
     stage: "commitment" | "registration";
     nativeFee: string;
-    /** The exact change recipient and cost ceilings approved for this build. */
+    /** Exact change recipient approved for this build. */
     changeAddress: string;
+    /** Approved cost ceilings per currency, in atomic units. */
     approvedCosts: RegistrationAmounts;
     snapshot: RegistrationChainSnapshot;
     /** Exact independently approved commitment outpoint, required for reveals. */
@@ -58,10 +59,10 @@ export interface PreparedIdentityRegistrationTransaction extends FundedRegistrat
     revealAuthorities: RegistrationIdentityAuthority[];
     signingStatus: "unsigned";
 }
-/** Signing always uses an independently retained prepared transaction as approval. */
+/** Sign only against an independently retained transaction approval. */
 export interface SignIdentityRegistrationTransactionArgs {
     transaction: PreparedIdentityRegistrationTransaction;
-    /** Optional partially signed candidate; its unsigned bytes must match transaction. */
+    /** Optional partial transaction whose unsigned bytes match the approved plan. */
     txHex?: string;
     keys?: string[][];
     partialTransactions?: string[];
@@ -78,18 +79,35 @@ export interface NameReservationTransactionResult {
 }
 export interface CreateIdentityRegistrationTransactionRequest {
     reservation: IdentityReservationRecord;
-    /** Exact outpoint of the signed/broadcast commitment; never an unsigned transaction ID. */
+    /** Confirmed commitment outpoint, using its signed transaction ID. */
     commitment: RegistrationFundingInput;
     identity: Identity | VerusCLIVerusIDJson;
     funding: RegistrationFundingInput[];
     changeAddress: string;
-    /** Maximum reveal costs in each currency. A refreshed quote cannot exceed this approval. */
+    /** Maximum reveal costs per currency; refreshed quotes must fit these caps. */
     approvedCosts: RegistrationAmounts;
     expiryDelta?: number;
+    /** Previously paid commitment fee, for the combined operation quote. */
+    commitmentFee?: string;
     offer?: string;
 }
+/**
+ * Resolve the namespace policy and initial quote at a consistent chain tip.
+ * Funding may raise relay fees; transaction builders enforce the caller's caps.
+ */
 export declare function resolveIdentityRegistration(rpc: VerusdRpcInterface, request: ResolveIdentityRegistrationRequest): Promise<ResolvedIdentityRegistration>;
-/** Economic validation must run before releasing a signature, including on external partials. */
+/**
+ * Check a candidate against the retained quote, outputs and spending approval.
+ * Run before signing or merging partials. This does not refresh chain state.
+ */
 export declare function validatePreparedIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex?: string, expectedChangeAddress?: string): true;
+/**
+ * Build an unsigned commitment and its private reservation recovery record.
+ * Persist the record securely before broadcasting; the reveal needs its salt.
+ */
 export declare function createNameReservationTransaction(rpc: VerusdRpcInterface, request: CreateNameReservationTransactionRequest): Promise<NameReservationTransactionResult>;
+/**
+ * Build an unsigned reveal spending the saved reservation's confirmed commitment.
+ * Recheck the active-chain commitment, namespace policy and approved reveal costs.
+ */
 export declare function createIdentityRegistrationTransaction(rpc: VerusdRpcInterface, request: CreateIdentityRegistrationTransactionRequest): Promise<PreparedIdentityRegistrationTransaction>;

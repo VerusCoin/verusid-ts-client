@@ -54,6 +54,7 @@ import {
   RegistrationChainSnapshot,
   RegistrationFundingInput,
   RegistrationPlannedOutput,
+  RegistrationPrevout,
   addAmounts,
   assertRegistrationSnapshot,
   atomic,
@@ -69,9 +70,11 @@ import {
 export interface ResolveIdentityRegistrationRequest
   extends IdentityRegistrationNameRequest {
   referralID?: string;
+
   /** Defaults to the chain's block-time-derived expiry delta (20 through 60). */
   expiryDelta?: number;
-  /** All costs are atomic integer strings. */
+
+  /** Commitment fee in atomic units, encoded as an integer string. */
   commitmentFee?: string;
   offer?: string;
 }
@@ -92,7 +95,8 @@ export interface IdentityReservationRecord {
   readonly systemID: string;
   readonly rootSystemName: string;
   readonly fullName: string;
-  /** Serialized SHA256d hash byte order, not daemon displayed uint256 hex. */
+
+  /** SHA256d commitment hash in serialized byte order. */
   readonly commitmentHashHex: string;
   readonly controller: string;
   readonly authorizationID?: string;
@@ -101,10 +105,12 @@ export interface IdentityReservationRecord {
 export interface CreateNameReservationTransactionRequest
   extends ResolveIdentityRegistrationRequest {
   controller: string;
-  /** Securely generated nonzero 32-byte salt in serialized/internal order. Never generated implicitly. */
+
+  /** Caller-generated, secure, nonzero 32-byte salt in serialized byte order. */
   salt: Buffer;
   funding: RegistrationFundingInput[];
   changeAddress: string;
+
   /** Maximum costs for the entire two-transaction operation, per currency. */
   approvedCosts: RegistrationAmounts;
 }
@@ -115,24 +121,30 @@ export interface PreparedIdentityRegistrationTransaction
   hex: string;
   stage: "commitment" | "registration";
   nativeFee: string;
-  /** The exact change recipient and cost ceilings approved for this build. */
+
+  /** Exact change recipient approved for this build. */
   changeAddress: string;
+
+  /** Approved cost ceilings per currency, in atomic units. */
   approvedCosts: RegistrationAmounts;
   snapshot: RegistrationChainSnapshot;
+
   /** Exact independently approved commitment outpoint, required for reveals. */
   commitment?: RegistrationFundingInput;
   quote: IdentityRegistrationQuote;
   identityAuthorities: RegistrationIdentityAuthority[];
   requiredSignatures: RegistrationInputSignatureStatus[];
+
   /** Commitments need these authorities when revealed, not when published. */
   revealAuthorities: RegistrationIdentityAuthority[];
   signingStatus: "unsigned";
 }
 
-/** Signing always uses an independently retained prepared transaction as approval. */
+/** Sign only against an independently retained transaction approval. */
 export interface SignIdentityRegistrationTransactionArgs {
   transaction: PreparedIdentityRegistrationTransaction;
-  /** Optional partially signed candidate; its unsigned bytes must match transaction. */
+
+  /** Optional partial transaction whose unsigned bytes match the approved plan. */
   txHex?: string;
   keys?: string[][];
   partialTransactions?: string[];
@@ -152,20 +164,23 @@ export interface NameReservationTransactionResult {
 
 export interface CreateIdentityRegistrationTransactionRequest {
   reservation: IdentityReservationRecord;
-  /** Exact outpoint of the signed/broadcast commitment; never an unsigned transaction ID. */
+
+  /** Confirmed commitment outpoint, using its signed transaction ID. */
   commitment: RegistrationFundingInput;
   identity: Identity | VerusCLIVerusIDJson;
   funding: RegistrationFundingInput[];
   changeAddress: string;
-  /** Maximum reveal costs in each currency. A refreshed quote cannot exceed this approval. */
+
+  /** Maximum reveal costs per currency; refreshed quotes must fit these caps. */
   approvedCosts: RegistrationAmounts;
   expiryDelta?: number;
+
+  /** Previously paid commitment fee, for the combined operation quote. */
+  commitmentFee?: string;
   offer?: string;
 }
 
-// Wallet form state can change while RPC requests are pending. Capture the
-// approved request before the first await so outputs, costs and recovery data
-// all describe the same invocation.
+/** Copy wallet inputs before RPC awaits so form edits cannot alter approval. */
 function snapshotNameReservationRequest(
   request: CreateNameReservationTransactionRequest
 ): CreateNameReservationTransactionRequest {
@@ -179,14 +194,16 @@ function snapshotNameReservationRequest(
   };
 }
 
+/** Detach the reveal request while preserving and validating typed identity data. */
 function snapshotIdentityRegistrationRequest(
   request: CreateIdentityRegistrationTransactionRequest
 ): CreateIdentityRegistrationTransactionRequest {
   const reservation = { ...request.reservation };
   let identity: Identity | VerusCLIVerusIDJson;
+
   if (request.identity instanceof Identity) {
-    // Serialization discards address types: an IdentityID primary key would
-    // decode as a KeyID with the same hash. Validate before that information is lost.
+    // Binary decoding turns primary addresses into KeyIDs. Validate their
+    // original types first so an IdentityID cannot pass as a primary key.
     validateIdentityForRegistration(
       request.identity,
       resolveIdentityRegistrationName({
@@ -204,10 +221,10 @@ function snapshotIdentityRegistrationRequest(
       reservation.rootSystemName
     );
   } else {
-    // This public branch accepts the daemon's JSON representation, including
-    // nested content data. Round-trip it now, before callers can mutate it.
+    // Copy nested content as well as top-level fields in daemon JSON input.
     identity = JSON.parse(JSON.stringify(request.identity));
   }
+
   return {
     ...request,
     reservation,
@@ -218,6 +235,7 @@ function snapshotIdentityRegistrationRequest(
   };
 }
 
+/** Bind registration policy and expiry to the selected chain's active tip. */
 async function snapshotForRegistration(
   rpc: VerusdRpcInterface,
   request: Pick<
@@ -234,6 +252,7 @@ async function snapshotForRegistration(
       "An explicit registration system and global root name are required."
     );
   }
+
   const [infoResponse, nativeResponse, selectedResponse] = await Promise.all([
     rpc.getInfo(),
     rpc.getCurrency(request.systemID),
@@ -253,6 +272,7 @@ async function snapshotForRegistration(
           selectedResponse,
           "getcurrency selected chain"
         );
+
   if (
     native.currencyid !== request.systemID ||
     native.systemid !== request.systemID ||
@@ -264,6 +284,7 @@ async function snapshotForRegistration(
       "RPC endpoint does not match the selected registration system."
     );
   }
+
   if (
     !Number.isSafeInteger(info.blocks) ||
     info.blocks < 1 ||
@@ -274,12 +295,15 @@ async function snapshotForRegistration(
       "RPC endpoint must have a synchronized active chain."
     );
   }
+
+  // Target roughly twenty minutes, bounded to the supported block-count range.
   const blockTime = native.blocktime == null ? 60 : native.blocktime;
   if (!Number.isSafeInteger(blockTime) || blockTime < 1)
     throw new RegistrationError(
       "INVALID_CHAIN_CONTEXT",
       "Invalid native block time."
     );
+
   const delta =
     request.expiryDelta == null
       ? Math.max(20, Math.min(60, Math.floor(1200 / blockTime)))
@@ -289,6 +313,7 @@ async function snapshotForRegistration(
       "INVALID_EXPIRY",
       "Expiry delta must be between 4 and 60 blocks."
     );
+
   const block = registrationRpcResult<any>(
     await rpc.getBlock(String(info.blocks), 1),
     "getblock tip"
@@ -303,12 +328,14 @@ async function snapshotForRegistration(
       "Tip block is not the active chain tip."
     );
   }
+
   const candidateHeight = info.blocks + 1;
   if (candidateHeight + delta >= 500000000)
     throw new RegistrationError(
       "INVALID_EXPIRY",
       "Registration expiry exceeds the protocol limit."
     );
+
   return {
     systemID: request.systemID,
     rootSystemName: request.rootSystemName,
@@ -320,22 +347,30 @@ async function snapshotForRegistration(
   };
 }
 
+/**
+ * Resolve the namespace policy and initial quote at a consistent chain tip.
+ * Funding may raise relay fees; transaction builders enforce the caller's caps.
+ */
 export async function resolveIdentityRegistration(
   rpc: VerusdRpcInterface,
   request: ResolveIdentityRegistrationRequest
 ): Promise<ResolvedIdentityRegistration> {
   request = { ...request };
   const snapshot = await snapshotForRegistration(rpc, request);
+
   const policy = await resolveIdentityRegistrationPolicy(rpc, {
     ...request,
     candidateHeight: snapshot.candidateHeight,
   });
   constrainRegistrationExpiry(snapshot, policy);
+
   const quote = quoteIdentityRegistration(policy, request);
   await assertRegistrationSnapshot(rpc, snapshot);
+
   return { policy, quote, snapshot };
 }
 
+/** Keep expiry within the quoted issuer-payment policy's lifetime. */
 function constrainRegistrationExpiry(
   snapshot: RegistrationChainSnapshot,
   policy: IdentityRegistrationPolicy
@@ -358,6 +393,7 @@ function constrainRegistrationExpiry(
   }
 }
 
+/** Check signing policies against raw outputs and the tip's unspent view. */
 async function authoritiesFor(
   rpc: VerusdRpcInterface,
   addresses: string[],
@@ -377,6 +413,7 @@ async function authoritiesFor(
         { getIdentity: async () => response },
         identityID
       );
+
       if (
         !result ||
         !/^[0-9a-f]{64}$/.test(result.txid) ||
@@ -392,6 +429,7 @@ async function authoritiesFor(
           "Signing authority requires a confirmed defining outpoint."
         );
       }
+
       const [rawResponse, unspentResponse] = await Promise.all([
         rpc.getRawTransaction(result.txid, 0),
         rpc.getTxOut(result.txid, result.vout, true),
@@ -408,6 +446,9 @@ async function authoritiesFor(
           "Signing authority outpoint does not match its raw transaction."
         );
       }
+
+      // Check the RPC identity against its canonical on-chain definition before
+      // using its primary keys or signature threshold to authorize spending.
       const script = new IdentityScript();
       script.fromBuffer(output.script, 0, output.script.length);
       const identity = script.getIdentity();
@@ -434,6 +475,9 @@ async function authoritiesFor(
           "Signing authority identity differs from its canonical defining output."
         );
       }
+
+      // Both the defining transaction and the unspent response must describe
+      // the same confirmed output at the snapshot's tip.
       const unspent = registrationRpcResult<any>(
         unspentResponse,
         "gettxout authorization"
@@ -443,12 +487,14 @@ async function authoritiesFor(
           "AUTHORITY_CHANGED",
           "Signing authority was spent or changed; refresh registration."
         );
+
       if (unspent.bestblock !== snapshot.tipHash) {
         throw new RegistrationError(
           "STALE_CHAIN_CONTEXT",
           "Chain tip changed while resolving signing authority."
         );
       }
+
       if (
         !Number.isSafeInteger(unspent.confirmations) ||
         unspent.confirmations < 1 ||
@@ -462,15 +508,19 @@ async function authoritiesFor(
           "Signing authority unspent state differs from its confirmed defining output."
         );
       }
-      if (isIdentityLockedAtHeight(identity, {
-        chainId: snapshot.systemID,
-        nextBlockHeight: snapshot.candidateHeight,
-      })) {
+
+      if (
+        isIdentityLockedAtHeight(identity, {
+          chainId: snapshot.systemID,
+          nextBlockHeight: snapshot.candidateHeight,
+        })
+      ) {
         throw new RegistrationError(
           "LOCKED_AUTHORITY",
           "Registration signing authority is locked."
         );
       }
+
       return {
         identityID,
         primaryAddresses,
@@ -479,6 +529,7 @@ async function authoritiesFor(
       };
     })
   );
+
   validateRegistrationIdentityAuthorities(authorities);
   return authorities;
 }
@@ -496,12 +547,126 @@ async function validateRegistrationChangeAddress(
   ) {
     return;
   }
-  // Identity payments bind to whoever controls the identity when they are spent.
-  // A commitment must not send its change to an identity that is not registered
-  // yet, including the identity this operation will create in its second stage.
+
+  // Identity change requires an existing spendable authority. The reveal may
+  // instead pay the identity it creates atomically (handled by the return above).
   await authoritiesFor(rpc, [changeAddress], snapshot);
 }
 
+/** Daemon PBaaS relay minimum in atomic units for supported outputs. */
+function registrationRelayFee(outputs: RegistrationPlannedOutput[]): BN {
+  const definition = outputs.find((output) => output.role === "identity");
+  let identityUnits = 0;
+
+  if (definition) {
+    const bytes = Buffer.from(definition.scriptHex, "hex");
+    const script = new IdentityScript();
+    script.fromBuffer(bytes, 0, bytes.length);
+    const identity = script.getIdentity();
+    const fullSize = identity.toBuffer().length;
+    identity.clearContentMultiMap();
+
+    // Count transaction-specific content in 128-byte units, then persistent
+    // content entries and addresses beyond the first of each kind.
+    identityUnits =
+      Math.ceil((fullSize - identity.toBuffer().length) / 128) +
+      identity.contentMap.size +
+      Math.max(0, (identity.primaryAddresses || []).length - 1) +
+      Math.max(0, (identity.privateAddresses || []).length - 1);
+  }
+
+  // These layouts fit GetMinRelayFeeByOutputs' output-count allowance.
+  // Identity units replace the base fee and large-script surcharges when nonzero.
+  let units = Math.max(1, identityUnits);
+  if (!identityUnits) {
+    for (const output of outputs) {
+      const size = Buffer.from(output.scriptHex, "hex").length;
+      if (size > 2000) units += size > 4000 ? 2 : 1;
+    }
+  }
+
+  return new BN(units).muln(10000);
+}
+
+/** Update the quote for actual relay fees and enforce approved cost caps. */
+async function fundQuotedRegistration(
+  rpc: VerusdRpcInterface,
+  resolved: ResolvedIdentityRegistration,
+  stage: PreparedIdentityRegistrationTransaction["stage"],
+  outputs: RegistrationPlannedOutput[],
+  funding: RegistrationFundingInput[],
+  changeAddress: string,
+  approvedCosts: RegistrationAmounts,
+  mandatory?: RegistrationPrevout
+): Promise<FundedRegistration> {
+  const quote = resolved.quote;
+  const commitment = stage === "commitment";
+  const feeField = commitment ? "commitmentFee" : "nativeFee";
+  let requiredFee = registrationRelayFee(outputs);
+
+  // Raising the fee can select another input and enlarge reserve change.
+  // Repeat funding until the quote covers the final output plan's relay minimum.
+  for (;;) {
+    const fee = atomic(quote[feeField]);
+    if (requiredFee.gt(fee)) {
+      const increase = requiredFee.sub(fee);
+
+      // Both stage fees affect the operation total. A reveal fee increase also
+      // changes the amount required for the reveal itself.
+      quote[feeField] = requiredFee.toString(10);
+      quote.totalOperationRequired[quote.systemID] = atomic(
+        quote.totalOperationRequired[quote.systemID]
+      )
+        .add(increase)
+        .toString(10);
+
+      if (!commitment) {
+        quote.totalRequired[quote.systemID] = atomic(
+          quote.totalRequired[quote.systemID]
+        )
+          .add(increase)
+          .toString(10);
+      }
+    }
+
+    const funded = await fundRegistration(
+      rpc,
+      resolved.snapshot,
+      outputs,
+      quote[feeField],
+      funding,
+      changeAddress,
+      mandatory
+    );
+    requiredFee = registrationRelayFee(funded.outputPlan);
+    if (requiredFee.gt(atomic(quote[feeField]))) continue;
+
+    // Commitment approval covers both stages; reveal approval covers only the
+    // remaining registration costs. Include the revised quote in the cap error.
+    const requiredCosts = commitment
+      ? quote.totalOperationRequired
+      : quote.totalRequired;
+    try {
+      requireAmounts(requiredCosts, approvedCosts);
+    } catch (error) {
+      if (
+        error instanceof RegistrationError &&
+        error.code === "COST_LIMIT_EXCEEDED"
+      ) {
+        throw new RegistrationError(error.code, error.message, {
+          quote,
+          requiredCosts,
+        });
+      }
+
+      throw error;
+    }
+
+    return funded;
+  }
+}
+
+/** Attach verified authorities and freeze the unsigned plan for later signing. */
 async function preparedTransaction(
   rpc: VerusdRpcInterface,
   funded: FundedRegistration,
@@ -513,6 +678,8 @@ async function preparedTransaction(
   approvedCosts: RegistrationAmounts,
   commitment?: RegistrationFundingInput
 ): Promise<PreparedIdentityRegistrationTransaction> {
+  // Key-hash inputs need no identity lookup. Resolve identity destinations from
+  // the actual funding scripts, including the commitment input on a reveal.
   const signingIdentities: string[] = [];
   for (const prevout of funded.prevouts) {
     if (
@@ -527,6 +694,7 @@ async function preparedTransaction(
         signingIdentities.push(dest.toAddress());
     });
   }
+
   const identityAuthorities = await authoritiesFor(
     rpc,
     signingIdentities,
@@ -536,6 +704,7 @@ async function preparedTransaction(
     ...funded,
     identityAuthorities,
   });
+
   const result: PreparedIdentityRegistrationTransaction = {
     ...funded,
     hex: funded.txHex,
@@ -551,21 +720,27 @@ async function preparedTransaction(
     requiredSignatures: signatureState.inputs,
     signingStatus: "unsigned",
   };
+
   validatePreparedIdentityRegistrationTransaction(result);
   await assertRegistrationSnapshot(rpc, resolved.snapshot);
+
   return freezePrepared(result);
 }
 
-/** Returned plans contain only JSON values, so freeze the entire approval receipt. */
+/** Recursively freeze the JSON-only approval receipt, including nested arrays. */
 function freezePrepared<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freezePrepared);
     Object.freeze(value);
   }
+
   return value;
 }
 
-/** Economic validation must run before releasing a signature, including on external partials. */
+/**
+ * Check a candidate against the retained quote, outputs and spending approval.
+ * Run before signing or merging partials. This does not refresh chain state.
+ */
 export function validatePreparedIdentityRegistrationTransaction(
   prepared: PreparedIdentityRegistrationTransaction,
   candidateHex?: string,
@@ -581,10 +756,12 @@ export function validatePreparedIdentityRegistrationTransaction(
       "Retain and supply the original prepared registration transaction with its cost and change approvals."
     );
   }
+
   validateRegistrationTransaction(
     prepared,
     candidateHex == null ? prepared.txHex : candidateHex
   );
+
   const systemID = prepared.snapshot.systemID;
   const quote = prepared.quote;
   if (
@@ -597,6 +774,7 @@ export function validatePreparedIdentityRegistrationTransaction(
       "Registration quote does not match its approved transaction context."
     );
   }
+
   const commitment = prepared.stage === "commitment";
   const expectedFee = commitment ? quote.commitmentFee : quote.nativeFee;
   if (prepared.nativeFee !== expectedFee)
@@ -604,6 +782,7 @@ export function validatePreparedIdentityRegistrationTransaction(
       "FEE_MISMATCH",
       "Transaction fee differs from the approved quote."
     );
+
   const expectedCosts = commitment
     ? { [systemID]: quote.commitmentFee }
     : quote.totalRequired;
@@ -611,6 +790,8 @@ export function validatePreparedIdentityRegistrationTransaction(
     commitment ? quote.totalOperationRequired : expectedCosts,
     prepared.approvedCosts
   );
+
+  // Require the protocol output order, followed by at most one change output.
   const expectedRoles: RegistrationPlannedOutput["role"][] = commitment
     ? ["commitment"]
     : [
@@ -637,6 +818,9 @@ export function validatePreparedIdentityRegistrationTransaction(
       "Registration output roles or ordering differ from the approved quote."
     );
   }
+
+  // Change returns funds to the approved recipient; all other outputs and the
+  // native fee must account for exactly the quoted spending in every currency.
   const costs: RegistrationAmounts = { [systemID]: prepared.nativeFee };
   outputs.forEach((output) => {
     if (output.role === "change") {
@@ -665,6 +849,7 @@ export function validatePreparedIdentityRegistrationTransaction(
       addAmounts(costs, output.values);
     }
   });
+
   new Set([...Object.keys(costs), ...Object.keys(expectedCosts)]).forEach(
     (id) => {
       if (!atomic(costs[id] || "0").eq(atomic(expectedCosts[id] || "0"))) {
@@ -677,6 +862,9 @@ export function validatePreparedIdentityRegistrationTransaction(
       }
     }
   );
+
+  // Matching totals alone is insufficient: issuer and referral outputs must
+  // also use the exact scripts and values derived from the quote.
   if (!commitment) {
     let i = 1;
     const payments: RegistrationPlannedOutput[] = [];
@@ -714,20 +902,36 @@ export function validatePreparedIdentityRegistrationTransaction(
       i++;
     });
   }
+
+  if (
+    atomic(prepared.nativeFee).lt(registrationRelayFee(prepared.outputPlan))
+  ) {
+    throw new RegistrationError(
+      "INSUFFICIENT_RELAY_FEE",
+      "Registration fee is below the daemon relay minimum. Rebuild and review the transaction."
+    );
+  }
+
   verifyIdentityRegistrationFunding(
     prepared,
     candidateHex,
     expectedChangeAddress
   );
+
   return true;
 }
 
+/**
+ * Build an unsigned commitment and its private reservation recovery record.
+ * Persist the record securely before broadcasting; the reveal needs its salt.
+ */
 export async function createNameReservationTransaction(
   rpc: VerusdRpcInterface,
   request: CreateNameReservationTransactionRequest
 ): Promise<NameReservationTransactionResult> {
   request = snapshotNameReservationRequest(request);
   const controller = destination(request.controller);
+
   if (
     !Buffer.isBuffer(request.salt) ||
     request.salt.length !== 32 ||
@@ -738,11 +942,13 @@ export async function createNameReservationTransaction(
       "Supply a securely generated nonzero 32-byte reservation salt."
     );
   }
+
   const salt = Buffer.from(request.salt);
   const resolved = await resolveIdentityRegistration(rpc, request);
   const { policy, quote, snapshot } = resolved;
   requireAmounts(quote.totalOperationRequired, request.approvedCosts);
   await validateRegistrationChangeAddress(rpc, request.changeAddress, snapshot);
+
   const revealAuthorities = await authoritiesFor(
     rpc,
     [
@@ -751,6 +957,7 @@ export async function createNameReservationTransaction(
     ],
     snapshot
   );
+
   const reservation = new AdvancedNameReservation({
     name: policy.resolvedName.name,
     parent: new IdentityID(
@@ -762,6 +969,7 @@ export async function createNameReservationTransaction(
     salt,
   });
   reservation.validateForCreation();
+
   const commitment = reservation.getCommitment();
   const script = IdentityCommitmentScript.fromCommitment(
     commitment,
@@ -770,6 +978,7 @@ export async function createNameReservationTransaction(
       ? destination(policy.requiredAuthorityID)
       : undefined
   );
+
   const record: IdentityReservationRecord = Object.freeze({
     schemaVersion: 1,
     kind: "advanced",
@@ -783,26 +992,35 @@ export async function createNameReservationTransaction(
     controller: request.controller,
     authorizationID: policy.requiredAuthorityID,
   });
-  // Verify that the selected wallet can cover both stages before it pays for a commitment.
+
+  // Check the supplied prevouts against the current quote for both stages.
   const available: RegistrationAmounts = {};
   for (const item of request.funding)
     addAmounts(
       available,
       (await readRegistrationPrevout(rpc, item, snapshot)).values
     );
-  if (
-    Object.keys(quote.totalOperationRequired).some((id) =>
-      atomic(available[id] || "0").lt(atomic(quote.totalOperationRequired[id]))
-    )
-  ) {
-    throw new RegistrationError(
-      "INSUFFICIENT_FUNDS",
-      "Approved funding must cover both the commitment and registration."
-    );
-  }
-  const funded = await fundRegistration(
+
+  const requireOperationFunds = () => {
+    if (
+      Object.keys(quote.totalOperationRequired).some((id) =>
+        atomic(available[id] || "0").lt(
+          atomic(quote.totalOperationRequired[id])
+        )
+      )
+    ) {
+      throw new RegistrationError(
+        "INSUFFICIENT_FUNDS",
+        "Approved funding must cover both the commitment and registration."
+      );
+    }
+  };
+
+  requireOperationFunds();
+  const funded = await fundQuotedRegistration(
     rpc,
-    snapshot,
+    resolved,
+    "commitment",
     [
       {
         role: "commitment",
@@ -811,10 +1029,14 @@ export async function createNameReservationTransaction(
         values: { [snapshot.systemID]: "0" },
       },
     ],
-    quote.commitmentFee,
     request.funding,
-    request.changeAddress
+    request.changeAddress,
+    request.approvedCosts
   );
+
+  // Funding can raise the commitment fee, increasing the combined requirement.
+  requireOperationFunds();
+
   return {
     reservation: record,
     transaction: await preparedTransaction(
@@ -831,6 +1053,7 @@ export async function createNameReservationTransaction(
   };
 }
 
+/** Match saved metadata to the canonical reservation and commitment hash. */
 function restoreReservation(
   record: IdentityReservationRecord
 ): AdvancedNameReservation {
@@ -839,8 +1062,10 @@ function restoreReservation(
       "INVALID_RESERVATION",
       "Unsupported saved reservation schema."
     );
+
   const reservation = AdvancedNameReservation.fromHex(record.reservationHex);
   reservation.validateForCreation();
+
   if (
     reservation.toBuffer().toString("hex") !== record.reservationHex ||
     reservation.getIdentityAddress() !== record.identityAddress ||
@@ -853,6 +1078,7 @@ function restoreReservation(
       "Saved reservation metadata differs from its canonical preimage."
     );
   }
+
   destination(record.controller);
   if (
     record.authorizationID &&
@@ -862,9 +1088,11 @@ function restoreReservation(
       "INVALID_RESERVATION",
       "Authorization must be an identity."
     );
+
   return reservation;
 }
 
+/** Encode an issuer burn payment with its native transfer fee. */
 function burnOutput(
   quote: IdentityRegistrationQuote
 ): RegistrationPlannedOutput {
@@ -883,6 +1111,7 @@ function burnOutput(
       destinationBytes: destination(payment.recipient).data.toBuffer(),
     }),
   });
+
   const dest = new TxDestination(
     new KeyID(RESERVE_TRANSFER_DESTINATION.destinationBytes)
   );
@@ -901,6 +1130,7 @@ function burnOutput(
     destinations: [dest],
     vData: [transfer.toBuffer()],
   });
+
   return {
     role: "burn",
     scriptHex: new SmartTransactionScript(master, condition)
@@ -914,6 +1144,10 @@ function burnOutput(
   };
 }
 
+/**
+ * Build an unsigned reveal spending the saved reservation's confirmed commitment.
+ * Recheck the active-chain commitment, namespace policy and approved reveal costs.
+ */
 export async function createIdentityRegistrationTransaction(
   rpc: VerusdRpcInterface,
   request: CreateIdentityRegistrationTransactionRequest
@@ -925,12 +1159,14 @@ export async function createIdentityRegistrationTransaction(
     ...record,
     expiryDelta: request.expiryDelta,
   });
+
   const commitment = await readRegistrationPrevout(
     rpc,
     request.commitment,
     snapshot,
     true
   );
+
   const expectedScript = IdentityCommitmentScript.fromCommitment(
     reservation.getCommitment(),
     destination(record.controller),
@@ -943,7 +1179,8 @@ export async function createIdentityRegistrationTransaction(
       "COMMITMENT_MISMATCH",
       "Commitment does not match the saved reservation and authorization conditions."
     );
-  // Bind the confirmed outpoint to its active block, not merely a cached height.
+
+  // Confirm the commitment is still in the active block reported for its UTXO.
   const block = registrationRpcResult<any>(
     await rpc.getBlock(String(commitment.height), 1),
     "getblock commitment"
@@ -961,9 +1198,13 @@ export async function createIdentityRegistrationTransaction(
       "Commitment is not in the expected active-chain block."
     );
   }
+
   const referralID = reservation.referral.toBuffer().equals(Buffer.alloc(20))
     ? undefined
     : reservation.referral.toAddress()!;
+
+  // Refresh policy at the reveal height while retaining the committed name
+  // and authorization requirements.
   const policy = await resolveIdentityRegistrationPolicy(rpc, {
     name: record.fullName,
     parent: record.parentID,
@@ -984,8 +1225,13 @@ export async function createIdentityRegistrationTransaction(
       "Resolved name or commitment authorization policy changed."
     );
   }
-  const quote = quoteIdentityRegistration(policy, { offer: request.offer });
+
+  const quote = quoteIdentityRegistration(policy, {
+    offer: request.offer,
+    commitmentFee: request.commitmentFee,
+  });
   requireAmounts(quote.totalRequired, request.approvedCosts);
+
   const identity =
     request.identity instanceof Identity
       ? new Identity()
@@ -997,10 +1243,12 @@ export async function createIdentityRegistrationTransaction(
       false,
       record.rootSystemName
     );
+
   // Only prune the detached copy. A single zero-length byte value remains valid.
   dropEmptyIdentityContent(identity);
   validateIdentityForRegistration(identity, policy.resolvedName);
   validateIdentitySize(identity);
+
   // This output may pay the identity created atomically by this same reveal.
   await validateRegistrationChangeAddress(
     rpc,
@@ -1008,6 +1256,7 @@ export async function createIdentityRegistrationTransaction(
     snapshot,
     record.identityAddress
   );
+
   for (const id of new Set([
     identity.revocationAuthority.toAddress()!,
     identity.recoveryAuthority.toAddress()!,
@@ -1015,6 +1264,7 @@ export async function createIdentityRegistrationTransaction(
     if (id !== record.identityAddress)
       await requireRegistrationIdentity(rpc, id);
   }
+
   const revealAuthorities = await authoritiesFor(
     rpc,
     [
@@ -1023,6 +1273,9 @@ export async function createIdentityRegistrationTransaction(
     ],
     snapshot
   );
+
+  // The reveal layout is identity, optional issuer payment, referrals, then
+  // reservation. Funding appends change while preserving this order.
   const outputs: RegistrationPlannedOutput[] = [
     {
       role: "identity",
@@ -1033,6 +1286,7 @@ export async function createIdentityRegistrationTransaction(
       values: { [record.systemID]: "0" },
     },
   ];
+
   if (quote.issuerPayment) {
     outputs.push(
       quote.issuerPayment.kind === "burn"
@@ -1055,6 +1309,7 @@ export async function createIdentityRegistrationTransaction(
       )
     )
   );
+
   outputs.push({
     role: "reservation",
     scriptHex: IdentityReservationScript.fromReservation(reservation)
@@ -1063,15 +1318,18 @@ export async function createIdentityRegistrationTransaction(
     value: "0",
     values: { [record.systemID]: "0" },
   });
-  const funded = await fundRegistration(
+
+  const funded = await fundQuotedRegistration(
     rpc,
-    snapshot,
+    { policy, quote, snapshot },
+    "registration",
     outputs,
-    quote.nativeFee,
     request.funding,
     request.changeAddress,
+    request.approvedCosts,
     commitment
   );
+
   return preparedTransaction(
     rpc,
     funded,
