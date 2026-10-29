@@ -1,0 +1,137 @@
+{
+  "request": {
+    "createmmr": true,
+    "encrypttoaddress": "zs1h0exdrt2lemtxh6866shf2ezagaqex9kqdcseulmy3c52esxmq55lrly886qftcp2t2k7ffa6xq",
+    "mmrdata": [
+      {
+        "message": "native interoperability one"
+      },
+      {
+        "message": "native interoperability two"
+      }
+    ],
+    "mmrsalt": [
+      "2323232323232323232323232323232323232323232323232323232323232323",
+      "4545454545454545454545454545454545454545454545454545454545454545"
+    ]
+  },
+  "result": {
+    "mmrdescriptor_encrypted": {
+      "version": 1,
+      "objecthashtype": 5,
+      "mmrhashtype": 1,
+      "mmrroot": {
+        "version": 1,
+        "flags": 5,
+        "objectdata": "6876d5276ce7f4eeca045d34808ec6c0fd2082d46e3e869e354b03ca2fec53911c6106f409edd51b8f2ee76e1c36a4178b67eb588222b9106a91f105e733828b14a886ccbf123c6a5a",
+        "epk": "7eec20a21d8d79105131ce6ebf7f1ce4692d678da0adfe8ec2217af6151d9ba6"
+      },
+      "mmrhashes": {
+        "version": 1,
+        "flags": 5,
+        "objectdata": "9b2b4cfeed705f4a6bc07df2cef772ed790d91114bc6b57c664e3ad2b14aec492b27c092b6bc7a270a1bacf0cf45fda939ea7f824bf445de7d6e01b88923e8cf5f27411d92c965e2a7c3fb80b0938535e4d4f546fde3800204aa0c5239f11694ff6c5875e204e8f1238700976c7d5fee2f46dc8bae92741c5fda1e62f4764b16",
+        "epk": "e42365afb8b186c6e8a50d864e912b0d9e2903bfeda14b41f686e93060fbbaa4"
+      },
+      "datadescriptors": [
+        {
+          "version": 1,
+          "flags": 5,
+          "objectdata": "17c95f42a894492d6b8440e935719b3a9ae8dc0d015baa368802fdefcd00dcf7d4fa90f1519dca531fd6829864841aa125ae6a82fa2e0c7b5181c3c0f43f3cd3fe5c1ceea80f6e2c2d4554034924e1b2acc67717f79c552600459805452a1add06c5591508",
+          "epk": "a508bcc4fcafdb56c1cba48b996e3b0f8ee8f342aa447dbce0e2183cbe58a83c"
+        },
+        {
+          "version": 1,
+          "flags": 5,
+          "objectdata": "8357e74a1fadb5b404c1dfb95fa11283972dee308c587b46c7ac7172035b617e9cadee429f06ed25224e37840425675279a2d061be05ba865ec1ea145fafa445326f1cd3cd2e0126248f6c35d8e8f22a140e687e4a5b92047ad52759817067529594de4d61",
+          "epk": "ac1155a609ace9a4317df12bbc71379ba626fe9fa13ce146eda2a188ef011858"
+        }
+      ]
+    },
+    "mmrdescriptor": {
+      "version": 1,
+      "objecthashtype": 5,
+      "mmrhashtype": 1,
+      "mmrroot": {
+        "version": 1,
+        "flags": 0,
+        "objectdata": "894f86300b290740301dae71828919cec63f7c05d9a784ab4715f82c11021fc2"
+      },
+      "mmrhashes": {
+        "version": 1,
+        "flags": 0,
+        "objectdata": "41d826d3c6cbbc3a96992670d2f604e959fd1a8c01410265adaed2ec377a7f454e921dbf4053a61d9e5baa718a2371655e2f6f6f1b25d79be0bb7bef0330b9eab5f13b9d1732a3ef70cc436758ad84a87040b36d6e80ae"
+      },
+      "datadescriptors": [
+        {
+          "version": 1,
+          "flags": 2,
+          "objectdata": "6e617469766520696e7465726f7065726162696c697479206f6e65",
+          "salt": "2323232323232323232323232323232323232323232323232323232323232323"
+        },
+        {
+          "version": 1,
+          "flags": 2,
+          "objectdata": "6e617469766520696e7465726f7065726162696c6974792074776f",
+          "salt": "4545454545454545454545454545454545454545454545454545454545454545"
+        }
+      ]
+    }
+  },
+  "records": [
+    {
+      "name": "root",
+      "encrypted": {
+        "version": 1,
+        "flags": 5,
+        "objectdata": "6876d5276ce7f4eeca045d34808ec6c0fd2082d46e3e869e354b03ca2fec53911c6106f409edd51b8f2ee76e1c36a4178b67eb588222b9106a91f105e733828b14a886ccbf123c6a5a",
+        "epk": "7eec20a21d8d79105131ce6ebf7f1ce4692d678da0adfe8ec2217af6151d9ba6"
+      },
+      "taggedPlaintextHex": "08a2ebb2c55f83a8e2a426a53320ed4d42124f4d0123010020894f86300b290740301dae71828919cec63f7c05d9a784ab4715f82c11021fc2",
+      "daemonDecrypted": "894f86300b290740301dae71828919cec63f7c05d9a784ab4715f82c11021fc2"
+    },
+    {
+      "name": "hashes",
+      "encrypted": {
+        "version": 1,
+        "flags": 5,
+        "objectdata": "9b2b4cfeed705f4a6bc07df2cef772ed790d91114bc6b57c664e3ad2b14aec492b27c092b6bc7a270a1bacf0cf45fda939ea7f824bf445de7d6e01b88923e8cf5f27411d92c965e2a7c3fb80b0938535e4d4f546fde3800204aa0c5239f11694ff6c5875e204e8f1238700976c7d5fee2f46dc8bae92741c5fda1e62f4764b16",
+        "epk": "e42365afb8b186c6e8a50d864e912b0d9e2903bfeda14b41f686e93060fbbaa4"
+      },
+      "taggedPlaintextHex": "08a2ebb2c55f83a8e2a426a53320ed4d42124f4d015a01005741d826d3c6cbbc3a96992670d2f604e959fd1a8c01410265adaed2ec377a7f454e921dbf4053a61d9e5baa718a2371655e2f6f6f1b25d79be0bb7bef0330b9eab5f13b9d1732a3ef70cc436758ad84a87040b36d6e80ae",
+      "daemonDecrypted": "41d826d3c6cbbc3a96992670d2f604e959fd1a8c01410265adaed2ec377a7f454e921dbf4053a61d9e5baa718a2371655e2f6f6f1b25d79be0bb7bef0330b9eab5f13b9d1732a3ef70cc436758ad84a87040b36d6e80ae"
+    },
+    {
+      "name": "leaf0",
+      "encrypted": {
+        "version": 1,
+        "flags": 5,
+        "objectdata": "17c95f42a894492d6b8440e935719b3a9ae8dc0d015baa368802fdefcd00dcf7d4fa90f1519dca531fd6829864841aa125ae6a82fa2e0c7b5181c3c0f43f3cd3fe5c1ceea80f6e2c2d4554034924e1b2acc67717f79c552600459805452a1add06c5591508",
+        "epk": "a508bcc4fcafdb56c1cba48b996e3b0f8ee8f342aa447dbce0e2183cbe58a83c"
+      },
+      "taggedPlaintextHex": "08a2ebb2c55f83a8e2a426a53320ed4d42124f4d013f01021b6e617469766520696e7465726f7065726162696c697479206f6e65202323232323232323232323232323232323232323232323232323232323232323",
+      "daemonDecrypted": "6e617469766520696e7465726f7065726162696c697479206f6e65"
+    },
+    {
+      "name": "leaf1",
+      "encrypted": {
+        "version": 1,
+        "flags": 5,
+        "objectdata": "8357e74a1fadb5b404c1dfb95fa11283972dee308c587b46c7ac7172035b617e9cadee429f06ed25224e37840425675279a2d061be05ba865ec1ea145fafa445326f1cd3cd2e0126248f6c35d8e8f22a140e687e4a5b92047ad52759817067529594de4d61",
+        "epk": "ac1155a609ace9a4317df12bbc71379ba626fe9fa13ce146eda2a188ef011858"
+      },
+      "taggedPlaintextHex": "08a2ebb2c55f83a8e2a426a53320ed4d42124f4d013f01021b6e617469766520696e7465726f7065726162696c6974792074776f204545454545454545454545454545454545454545454545454545454545454545",
+      "daemonDecrypted": "6e617469766520696e7465726f7065726162696c6974792074776f"
+    }
+  ],
+  "localEncrypted": {
+    "version": 1,
+    "flags": 5,
+    "objectdata": "e762c2de01d46eb1c72e3bec9023b0e8355cdcaa62f385799ceea1ab7960c6632257f628882df75d6fef4502d6703760627bd1b011b1bfb070b0b784c03e75e0b24a197b3f1a72cfb5ba60f9f60389570bf43ffd0b588213035b5cc8077df1f86590ceaa92",
+    "epk": "d3e45bab8c56cc12d4a17dba715e5ad15f6b35d7a14eea4905cd8c75fc3f3de2"
+  },
+  "daemonDecrypted": "6e617469766520696e7465726f7065726162696c697479206f6e65",
+  "authenticatedRejection": {
+    "corruptedCiphertext": true,
+    "wrongViewingKey": true
+  }
+}

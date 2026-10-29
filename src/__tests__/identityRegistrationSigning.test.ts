@@ -1,0 +1,658 @@
+import {
+  CommitmentHash,
+  IdentityCommitmentScript,
+  IdentityID,
+  KeyID,
+  OptCCParams,
+  SmartTransactionScript,
+  TxDestination,
+} from "verus-typescript-primitives";
+import BN from "bn.js";
+import {
+  crypto,
+  ECPair,
+  networks,
+  script,
+  SmartTransactionSignature,
+  SmartTransactionSignatures,
+  Transaction,
+  TransactionBuilder,
+} from "@bitgo/utxo-lib";
+import {
+  inspectIdentityRegistrationSignatures,
+  mergeIdentityRegistrationTransactions,
+  RegistrationIdentityAuthority,
+  signIdentityRegistrationTransaction,
+} from "../identity/registrationSigning";
+
+const network = networks.verus;
+const keys = [1, 2, 3, 4].map((number) =>
+  ECPair.fromPrivateKeyBuffer(Buffer.alloc(32, number), network)
+);
+const authorityID = new IdentityID(Buffer.alloc(20, 17));
+const controller = new TxDestination(
+  new KeyID(crypto.hash160(keys[0].getPublicKeyBuffer()))
+);
+const authority: RegistrationIdentityAuthority = {
+  identityID: authorityID.toAddress()!,
+  primaryAddresses: [keys[1].getAddress(), keys[2].getAddress()],
+  minimumSignatures: 2,
+};
+
+function transactionBuilder(): any {
+  const builder = new TransactionBuilder(network);
+  builder.setVersion(4);
+  builder.setVersionGroupId(0x892f2085);
+  builder.setExpiryHeight(1000);
+  return builder;
+}
+
+function fixture(commitment = true, value = 10000, identity = authority) {
+  const previous = transactionBuilder();
+  previous.addInput("12".repeat(32), 0);
+  previous.addOutput(
+    commitment
+      ? IdentityCommitmentScript.fromCommitment(
+          new CommitmentHash({ hash: Buffer.alloc(32, 42) }),
+          controller,
+          new TxDestination(authorityID)
+        ).toBuffer()
+      : script.pubKeyHash.output.encode(
+          crypto.hash160(keys[0].getPublicKeyBuffer())
+        ),
+    value
+  );
+  const source = previous.buildIncomplete();
+  const spending = transactionBuilder();
+  spending.addInput(source, 0);
+  spending.addOutput(keys[3].getAddress(), 0);
+  return {
+    spending,
+    args: {
+      txHex: spending.buildIncomplete().toHex(),
+      prevouts: [
+        {
+          txid: source.getId(),
+          vout: 0,
+          rawTransaction: source.toHex(),
+          value: String(value),
+          scriptHex: source.outs[0].script.toString("hex"),
+        },
+      ],
+      identityAuthorities: [identity],
+    },
+  };
+}
+
+function largeSmartFixture() {
+  // Each identity is within the daemon's 25-key / 13-signature limits, but
+  // combining their signatures can still overflow a single CC fulfillment.
+  const signingKeys = Array.from({ length: 60 }, (_, index) =>
+    ECPair.fromPrivateKeyBuffer(Buffer.alloc(32, index + 1), network)
+  );
+  const identities = [81, 82, 83].map(
+    (value) => new IdentityID(Buffer.alloc(20, value))
+  );
+  const identityAuthorities = identities.map((identity, index) => ({
+    identityID: identity.toAddress()!,
+    primaryAddresses: signingKeys
+      .slice(index * 20, (index + 1) * 20)
+      .map((key) => key.getAddress()),
+    minimumSignatures: 13,
+  }));
+  const outputScript = new SmartTransactionScript(
+    new OptCCParams({
+      version: new BN(3),
+      evalCode: new BN(0),
+      m: new BN(0),
+      n: new BN(0),
+      destinations: [],
+      vData: [],
+    }),
+    new OptCCParams({
+      version: new BN(3),
+      evalCode: new BN(0),
+      m: new BN(3),
+      n: new BN(3),
+      destinations: identities.map((identity) => new TxDestination(identity)),
+      vData: [],
+    })
+  ).toBuffer();
+  const previous = transactionBuilder();
+  previous.addInput("ab".repeat(32), 0);
+  previous.addOutput(outputScript, 20000);
+  const source = previous.buildIncomplete();
+  const spending = transactionBuilder();
+  spending.addInput(source, 0);
+  spending.addOutput(keys[0].getAddress(), 10000);
+  return {
+    signingKeys,
+    args: {
+      txHex: spending.buildIncomplete().toHex(),
+      prevouts: [
+        { txid: source.getId(), vout: 0, rawTransaction: source.toHex() },
+      ],
+      identityAuthorities,
+    },
+  };
+}
+
+describe("local identity registration signing", () => {
+  test.each([true, false])(
+    "checks daemon master-push limits for 2-of-4 funding (indexed master: %s)",
+    (indexedMaster) => {
+      const destinations = keys.map(
+        (key) =>
+          new TxDestination(new KeyID(crypto.hash160(key.getPublicKeyBuffer())))
+      );
+      const condition = new OptCCParams({
+        version: new BN(3),
+        evalCode: new BN(0),
+        m: new BN(2),
+        n: new BN(4),
+        destinations,
+        vData: [],
+      });
+      const master = indexedMaster
+        ? condition
+        : new OptCCParams({
+            version: new BN(3),
+            evalCode: new BN(0),
+            m: new BN(0),
+            n: new BN(0),
+            destinations: [],
+            vData: [],
+          });
+      const previous = transactionBuilder();
+      const outputScript = new SmartTransactionScript(
+        master,
+        condition
+      ).toBuffer();
+      previous.addInput("ab".repeat(32), 0);
+      previous.addOutput(outputScript, 20000);
+      const source = previous.buildIncomplete();
+      const spending = transactionBuilder();
+      spending.addInput(source, 0);
+      spending.addOutput(keys[0].getAddress(), 10000);
+      const args = {
+        txHex: spending.buildIncomplete().toHex(),
+        prevouts: [
+          { txid: source.getId(), vout: 0, rawTransaction: source.toHex() },
+        ],
+        keys: [[keys[0].toWIF(), keys[1].toWIF()]],
+      };
+      if (indexedMaster) {
+        expect(outputScript[0]).toBe(0x4c);
+        expect(() => signIdentityRegistrationTransaction(args)).toThrow(
+          /master push/
+        );
+      } else {
+        expect(outputScript[0]).toBeLessThan(0x4c);
+        expect(signIdentityRegistrationTransaction(args).signingStatus).toBe(
+          "complete"
+        );
+      }
+    }
+  );
+
+  test("rejects a previous smart script over the daemon script-size limit", () => {
+    const { args } = fixture();
+    const previous = Transaction.fromHex(
+      args.prevouts[0].rawTransaction,
+      network
+    );
+    previous.outs[0].script = Buffer.concat([
+      previous.outs[0].script,
+      Buffer.alloc(10001),
+    ]);
+    const spending = Transaction.fromHex(args.txHex, network);
+    spending.ins[0].hash = previous.getHash();
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        txHex: spending.toHex(),
+        prevouts: [
+          { txid: previous.getId(), vout: 0, rawTransaction: previous.toHex() },
+        ],
+      })
+    ).toThrow(/script size/);
+  });
+
+  test("matches the dependency's P2PKH digest and fulfillment exactly", () => {
+    const { spending, args } = fixture(false);
+    spending.sign(0, keys[0], undefined, Transaction.SIGHASH_ALL, 10000);
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF()]],
+    });
+    expect(signed.txHex).toBe(spending.buildIncomplete().toHex());
+    expect(signed.signingStatus).toBe("complete");
+    expect(signed.inputs[0].requirements[0].missingSignatures).toBe(0);
+  });
+
+  test("merges controller and two identity keys on the same zero-value commitment", () => {
+    const { args } = fixture(true, 0);
+    const inspect = inspectIdentityRegistrationSignatures(args);
+    expect(inspect.signingStatus).toBe("unsigned");
+    expect(
+      inspect.inputs[0].requirements.map(
+        (requirement) => requirement.missingSignatures
+      )
+    ).toEqual([1, 2]);
+    const controllerOnly = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF()]],
+    });
+    expect(controllerOnly.signingStatus).toBe("partial");
+    const authorityOnly = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[1].toWIF(), keys[2].toWIF()]],
+    });
+    expect(authorityOnly.signingStatus).toBe("partial");
+    const merged = mergeIdentityRegistrationTransactions({
+      ...args,
+      partialTransactions: [controllerOnly.txHex, authorityOnly.txHex],
+    });
+    expect(merged.signingStatus).toBe("complete");
+    expect(
+      merged.inputs[0].requirements.map(
+        (requirement) => requirement.missingSignatures
+      )
+    ).toEqual([0, 0]);
+    const transaction = Transaction.fromHex(merged.txHex, network);
+    const signatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    expect(signatures.signatures).toHaveLength(3);
+    const keyHashes = signatures.signatures.map((entry: any) =>
+      crypto.hash160(entry.pubKeyData).toString("hex")
+    );
+    expect(keyHashes).toEqual([...keyHashes].sort());
+    expect(
+      mergeIdentityRegistrationTransactions({
+        ...args,
+        txHex: merged.txHex,
+        partialTransactions: [controllerOnly.txHex, merged.txHex],
+      }).txHex
+    ).toBe(merged.txHex);
+    expect(merged.txid).toBe(transaction.getId());
+    expect(merged.txid).not.toBe(
+      Transaction.fromHex(args.txHex, network).getId()
+    );
+  });
+
+  test("inspection preserves valid signature order and the exact submitted txid", () => {
+    const { args } = fixture(true, 0);
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF(), keys[1].toWIF(), keys[2].toWIF()]],
+    });
+    const transaction = Transaction.fromHex(signed.txHex, network);
+    const signatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    signatures.signatures.reverse();
+    transaction.ins[0].script = script.compile([signatures.toBuffer()]);
+    expect(transaction.getId()).not.toBe(signed.txid);
+
+    const inspected = inspectIdentityRegistrationSignatures({
+      ...args,
+      txHex: transaction.toHex(),
+    });
+    expect(inspected.signingStatus).toBe("complete");
+    expect(inspected.hex).toBe(transaction.toHex());
+    expect(inspected.txHex).toBe(transaction.toHex());
+    expect(inspected.txid).toBe(transaction.getId());
+  });
+
+  test("enforces the 6000-byte smart fulfillment limit when inspecting, signing, and merging", () => {
+    const { args, signingKeys } = largeSmartFixture();
+    const withinLimit = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [signingKeys.slice(0, 59).map((key) => key.toWIF())],
+    });
+    const transaction = Transaction.fromHex(withinLimit.txHex, network);
+    const signatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    expect(signatures.toBuffer()).toHaveLength(5903);
+    expect(withinLimit.signingStatus).toBe("complete");
+    expect(
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: withinLimit.txHex,
+      }).signingStatus
+    ).toBe("complete");
+
+    // Construct one more valid signature independently, so the inspector is
+    // tested with an externally signed oversized transaction as well.
+    const extra = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[signingKeys[59].toWIF()]],
+    });
+    const extraTransaction = Transaction.fromHex(extra.txHex, network);
+    const extraSignatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(extraTransaction.ins[0].script)[0]
+    );
+    signatures.signatures.push(extraSignatures.signatures[0]);
+    expect(signatures.toBuffer()).toHaveLength(6003);
+    transaction.ins[0].script = script.compile([signatures.toBuffer()]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+      })
+    ).toThrow(/6000-byte limit/);
+    expect(() =>
+      signIdentityRegistrationTransaction({
+        ...args,
+        txHex: withinLimit.txHex,
+        keys: [[signingKeys[59].toWIF()]],
+      })
+    ).toThrow(/6000-byte limit/);
+    expect(() =>
+      mergeIdentityRegistrationTransactions({
+        ...args,
+        partialTransactions: [withinLimit.txHex, extra.txHex],
+      })
+    ).toThrow(/6000-byte limit/);
+  });
+
+  test("matches the dependency's first smart signature before assembling further signatures", () => {
+    const { spending, args } = fixture();
+    spending.sign(0, keys[0], undefined, Transaction.SIGHASH_ALL, 10000);
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF()]],
+    });
+    expect(signed.txHex).toBe(spending.buildIncomplete().toHex());
+  });
+
+  test("counts a shared key for both the controller and an identity condition", () => {
+    const { args } = fixture(true, 0, {
+      ...authority,
+      primaryAddresses: [keys[0].getAddress()],
+      minimumSignatures: 1,
+    });
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF()]],
+    });
+    expect(signed.signingStatus).toBe("complete");
+    expect(
+      signed.inputs[0].requirements.map(
+        (requirement) => requirement.signedKeyIDs
+      )
+    ).toEqual([[keys[0].getAddress()], [keys[0].getAddress()]]);
+  });
+
+  test("does not infer an identity's threshold or keys from its i-address", () => {
+    const { args } = fixture();
+    const unresolved = { ...args, identityAuthorities: [] };
+    const inspected = inspectIdentityRegistrationSignatures(unresolved);
+    expect(inspected.inputs[0].requirements[1]).toMatchObject({
+      threshold: null,
+      missingSignatures: null,
+      unresolvedIdentity: true,
+    });
+    expect(() =>
+      signIdentityRegistrationTransaction({
+        ...unresolved,
+        keys: [[keys[1].toWIF()]],
+      })
+    ).toThrow(/authority context/);
+    const fullySigned = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF(), keys[1].toWIF(), keys[2].toWIF()]],
+    });
+    expect(
+      inspectIdentityRegistrationSignatures({
+        ...unresolved,
+        txHex: fullySigned.txHex,
+      }).signingStatus
+    ).toBe("partial");
+  });
+
+  test.each([
+    [
+      "output value",
+      (tx: any) => {
+        tx.outs[0].value = 1;
+      },
+    ],
+    [
+      "output script",
+      (tx: any) => {
+        tx.outs[0].script = script.pubKeyHash.output.encode(
+          Buffer.alloc(20, 55)
+        );
+      },
+    ],
+    [
+      "input",
+      (tx: any) => {
+        tx.ins[0].index = 1;
+      },
+    ],
+    [
+      "sequence",
+      (tx: any) => {
+        tx.ins[0].sequence = 42;
+      },
+    ],
+    [
+      "expiry",
+      (tx: any) => {
+        tx.expiryHeight += 1;
+      },
+    ],
+    [
+      "locktime",
+      (tx: any) => {
+        tx.locktime = 1;
+      },
+    ],
+  ])("rejects externally changed %s", (_label, change) => {
+    const { args } = fixture();
+    const changed = Transaction.fromHex(args.txHex, network);
+    (change as (tx: any) => void)(changed);
+    expect(() =>
+      mergeIdentityRegistrationTransactions({
+        ...args,
+        partialTransactions: [changed.toHex()],
+      })
+    ).toThrow(/changes the approved/);
+  });
+
+  test("binds the exact previous transaction, index, script, and native value", () => {
+    const { args } = fixture();
+    for (const replacement of [
+      { txid: "00".repeat(32) },
+      { vout: 1 },
+      { rawTransaction: fixture(false).args.prevouts[0].rawTransaction },
+      { scriptHex: "00" },
+      { value: "10001" },
+    ]) {
+      expect(() =>
+        inspectIdentityRegistrationSignatures({
+          ...args,
+          prevouts: [{ ...args.prevouts[0], ...replacement }],
+        })
+      ).toThrow(/prevout/i);
+    }
+  });
+
+  test("rejects duplicate outpoints", () => {
+    const { args } = fixture();
+    const transaction = Transaction.fromHex(args.txHex, network);
+    transaction.ins.push(transaction.ins[0]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+        prevouts: [args.prevouts[0], args.prevouts[0]],
+      })
+    ).toThrow(/duplicated/);
+  });
+
+  test("rejects foreign signing keys and invalid signatures", () => {
+    const { args } = fixture();
+    expect(() =>
+      signIdentityRegistrationTransaction({
+        ...args,
+        keys: [[keys[3].toWIF()]],
+      })
+    ).toThrow(/Cannot prove/);
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF()]],
+    });
+    const transaction = Transaction.fromHex(signed.txHex, network);
+    const signatures = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    signatures.signatures[0].oneSignature[10] ^= 1;
+    transaction.ins[0].script = script.compile([signatures.toBuffer()]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+      })
+    ).toThrow(/Invalid registration input signature/);
+  });
+
+  test.each([
+    Transaction.SIGHASH_NONE,
+    Transaction.SIGHASH_ALL | Transaction.SIGHASH_ANYONECANPAY,
+  ])("rejects smart sighash mode %s", (hashType) => {
+    const { args } = fixture();
+    const transaction = Transaction.fromHex(args.txHex, network);
+    const previous = args.prevouts[0];
+    const digest = transaction.hashForSignatureByNetwork(
+      0,
+      Buffer.from(previous.scriptHex, "hex"),
+      10000,
+      hashType,
+      false
+    );
+    transaction.ins[0].script = script.compile([
+      new SmartTransactionSignatures(1, hashType, [
+        new SmartTransactionSignature(
+          1,
+          1,
+          keys[0].getPublicKeyBuffer(),
+          keys[0].sign(digest).toRSBuffer(undefined, 0)
+        ),
+      ]).toBuffer(),
+    ]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+      })
+    ).toThrow(/SIGHASH_ALL/);
+  });
+
+  test("rejects non-ALL P2PKH signatures", () => {
+    const { spending, args } = fixture(false);
+    spending.sign(0, keys[0], undefined, Transaction.SIGHASH_NONE, 10000);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: spending.buildIncomplete().toHex(),
+      })
+    ).toThrow(/SIGHASH_ALL/);
+  });
+
+  test("rejects high-S compact signatures even though the dependency normalizes them", () => {
+    const { args } = fixture();
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF()]],
+    });
+    const transaction = Transaction.fromHex(signed.txHex, network);
+    const collection = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    const compact: Buffer = collection.signatures[0].oneSignature;
+    const order = new BN(
+      "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+      16
+    );
+    order
+      .sub(new BN(compact.subarray(32)))
+      .toArrayLike(Buffer, "be", 32)
+      .copy(compact, 32);
+    transaction.ins[0].script = script.compile([collection.toBuffer()]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+      })
+    ).toThrow(/low-S/);
+  });
+
+  test("rejects duplicate signatures and trailing bytes in a smart fulfillment", () => {
+    const { args } = fixture();
+    const signed = signIdentityRegistrationTransaction({
+      ...args,
+      keys: [[keys[0].toWIF()]],
+    });
+    const transaction = Transaction.fromHex(signed.txHex, network);
+    const collection = SmartTransactionSignatures.fromChunk(
+      script.decompile(transaction.ins[0].script)[0]
+    );
+    transaction.ins[0].script = script.compile([
+      Buffer.concat([collection.toBuffer(), Buffer.from([0])]),
+    ]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+      })
+    ).toThrow(/canonical/);
+    collection.signatures.push(collection.signatures[0]);
+    transaction.ins[0].script = script.compile([collection.toBuffer()]);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        txHex: transaction.toHex(),
+      })
+    ).toThrow(/Duplicate/);
+  });
+
+  test("rejects unknown consensus branches and invalid identity contexts", () => {
+    const { args } = fixture();
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        network: {
+          ...network,
+          consensusBranchId: { ...network.consensusBranchId, 4: 1 },
+        },
+      })
+    ).toThrow(/consensus branch/);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        identityAuthorities: [{ ...authority, revoked: true }],
+      })
+    ).toThrow(/revoked/);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        identityAuthorities: [
+          {
+            ...authority,
+            primaryAddresses: [keys[1].getAddress(), keys[1].getAddress()],
+          },
+        ],
+      })
+    ).toThrow(/Duplicate/);
+    expect(() =>
+      inspectIdentityRegistrationSignatures({
+        ...args,
+        identityAuthorities: [{ ...authority, minimumSignatures: 3 }],
+      })
+    ).toThrow(/threshold/);
+  });
+});

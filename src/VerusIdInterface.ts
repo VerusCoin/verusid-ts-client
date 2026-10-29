@@ -24,7 +24,6 @@ import {
   OPS,
   EVALS,
   IdentityUpdateRequestDetails,
-  VerusCLIVerusIDJson,
   PartialIdentity,
   GenericRequest,
   GenericRequestInterface,
@@ -76,6 +75,42 @@ import BigNumber from "bignumber.js"
 import { BN } from "bn.js";
 import { GenericEnvelope } from "verus-typescript-primitives/dist/vdxf/classes/envelope/GenericEnvelope";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
+import {
+  CreateIdentityRegistrationTransactionRequest,
+  CreateNameReservationTransactionRequest,
+  PreparedIdentityRegistrationTransaction,
+  SignIdentityRegistrationTransactionArgs,
+  MergeIdentityRegistrationTransactionsArgs,
+  ResolveIdentityRegistrationRequest,
+  createIdentityRegistrationTransaction,
+  createNameReservationTransaction,
+  resolveIdentityRegistration,
+  validatePreparedIdentityRegistrationTransaction
+} from "./identity/registration";
+import {
+  InspectIdentityRegistrationSignaturesArgs,
+  inspectIdentityRegistrationSignatures,
+  signIdentityRegistrationTransaction
+} from "./identity/registrationSigning";
+import { verifyIdentityRegistrationFunding } from "./identity/registrationFundingVerification";
+import { RegistrationError } from "./identity/registrationPolicy";
+import { IdentityLockContext } from "./identity/identityLocks";
+import { IdentityUpdateFundingApproval, createIdentityUpdateFundingApproval, defaultIdentityUpdateFeeCap, identityUpdateFeeCap, verifyIdentityUpdateFunding, verifyIdentityDefinitionOutput } from "./identity/updateFundingVerification";
+import { transaction as fundingTransaction, validAddress } from "./identity/fundingPrimitives";
+import { assertUnverifiedPrevoutsAllowed, verifyTransparentTransaction } from "./identity/fundingVerification";
+import { IdentityUpdateDataDecryptor, verifyIdentityUpdateData } from "./identity/updateDataVerification";
+import { LocalIdentityUploadCrypto, buildLocalIdentityUpdateData, captureLocalIdentityUploadCrypto, validateLocalIdentityUploadRequest } from "./identity/localUpdateData";
+import { applyLocalIdentityUpdate, LocalIdentityUpdateResult, validateSupportedIdentityUpdateState } from "./identity/localIdentityUpdate";
+import { validateFullIdentityUpdate } from "./identity/fullIdentityUpdateValidation";
+import { MAX_IDENTITY_UPDATE_EXPIRY_DELTA, MIN_IDENTITY_UPDATE_EXPIRY_DELTA, validateIdentityUpdateTransactionSize } from "./identity/updateLimits";
+import { snapshotUpdateRequestValue } from "./identity/requestSnapshot";
+import {
+  dropEmptyIdentityContent,
+  validateIdentityDefinition,
+  validateIdentityPrimaryAddresses,
+  validateIdentityVersion,
+  validatePartialIdentityDefinition
+} from "./identity/identityValidation";
 
 const { createUnfundedIdentityUpdate, validateFundedCurrencyTransfer, completeFundedIdentityUpdate } = smarttxs;
 
@@ -111,18 +146,26 @@ export type CurrencyTransferOutput = {
 export type IdentityUpdateCurrencyTransferOptions = {
   chainIAddr?: string;
   maxFee?: number;
+  /** Required for data uploads; authenticates and decrypts the returned descriptors. */
+  decryptData?: IdentityUpdateDataDecryptor;
+  /** Wallet encryption, randomness, and authenticated decryption for local uploads. */
+  localUploadCrypto?: LocalIdentityUploadCrypto;
   fundRawTransactionResult?: FundRawTransactionResponse["result"];
   currentHeight?: number;
   updateIdentityTransactionHex?: string;
   parseVdxfObjects?: boolean;
   isTestnet?: boolean;
   expectedIdentityPrimaryAddress?: string;
+  /** Exact ordered signing policy. Supply both fields instead of expectedIdentityPrimaryAddress. */
+  expectedIdentityPrimaryAddresses?: string[];
+  expectedIdentityMinimumSignatures?: number;
   // Only use this for trusted callers or static fixtures that cannot provide previous raw transactions.
+  /** Static fixtures only; enabling this requires NODE_ENV=test. */
   allowUnverifiedPrevouts?: boolean;
 }
 
-export type AddressUtxos = Extract<GetAddressUtxosResponse["result"], unknown[]>;
-export type AddressUtxo = AddressUtxos[number];
+export type AddressUtxo = Extract<GetAddressUtxosResponse["result"], unknown[]>[number] & { rawTransaction?: string };
+export type AddressUtxos = AddressUtxo[];
 
 function getUtxos(result: GetAddressUtxosResponse["result"]): AddressUtxos {
   return Array.isArray(result) ? result : result.utxos;
@@ -133,10 +176,13 @@ export type IdentityUpdateTransactionResult = {
   utxos: AddressUtxos;
   identity: Identity;
   deltas: Map<string, BigNumber>;
+  fundingApproval?: IdentityUpdateFundingApproval;
 }
 
 type PreparedIdentityUpdateTransaction = {
   height: number;
+  expiryHeight: number;
+  chainId: string;
   identityTransaction: typeof Transaction;
   identityAddress: string;
   identityOnOutput: Identity;
@@ -171,10 +217,103 @@ class VerusIdInterface {
     return info.longestchain;
   }
 
+  /** Resolve and quote a modern commit/reveal registration without broadcasting. */
+  resolveIdentityRegistration(request: ResolveIdentityRegistrationRequest) {
+    return resolveIdentityRegistration(this.interface, request);
+  }
+
+  /** Builds the commitment transaction and returns private reservation recovery data. */
+  createNameReservationTransaction(request: CreateNameReservationTransactionRequest) {
+    return createNameReservationTransaction(this.interface, request);
+  }
+
+  /** Spends an explicitly identified, confirmed commitment to create an identity. */
+  createIdentityRegistrationTransaction(request: CreateIdentityRegistrationTransactionRequest) {
+    return createIdentityRegistrationTransaction(this.interface, request);
+  }
+
+  signIdentityRegistrationTransaction(request: SignIdentityRegistrationTransactionArgs) {
+    const prepared = request.transaction;
+    validatePreparedIdentityRegistrationTransaction(prepared, request.txHex);
+    for (const partial of request.partialTransactions || []) validatePreparedIdentityRegistrationTransaction(prepared, partial);
+    return signIdentityRegistrationTransaction({
+      txHex: request.txHex == null ? prepared.txHex : request.txHex,
+      prevouts: prepared.prevouts,
+      identityAuthorities: prepared.identityAuthorities,
+      keys: request.keys,
+      partialTransactions: request.partialTransactions
+    });
+  }
+
+  mergeIdentityRegistrationTransactions(request: MergeIdentityRegistrationTransactionsArgs) {
+    return this.signIdentityRegistrationTransaction(request);
+  }
+
+  inspectIdentityRegistrationSignatures(request: InspectIdentityRegistrationSignaturesArgs) {
+    return inspectIdentityRegistrationSignatures(request);
+  }
+
+  /** Verify the approved economic intent and every supplied signature; inspect signingStatus before broadcast. */
+  validateIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, candidateHex = prepared.txHex, expectedChangeAddress = prepared.changeAddress) {
+    validatePreparedIdentityRegistrationTransaction(prepared, candidateHex, expectedChangeAddress);
+    return {
+      valid: true as const,
+      ...inspectIdentityRegistrationSignatures({
+        txHex: candidateHex,
+        prevouts: prepared.prevouts,
+        identityAuthorities: prepared.identityAuthorities
+      })
+    };
+  }
+
+  /** Independently account for raw input/output currencies against retained approval. No RPC or signature cache. */
+  verifyIdentityRegistrationFunding(prepared: PreparedIdentityRegistrationTransaction, candidateHex = prepared.txHex, expectedChangeAddress = prepared.changeAddress) {
+    return verifyIdentityRegistrationFunding(prepared, candidateHex, expectedChangeAddress);
+  }
+
+  /** Validate funding, approved intent, and complete signatures on every send, including retries. */
+  async sendIdentityRegistrationTransaction(prepared: PreparedIdentityRegistrationTransaction, signedHex: string, expectedChangeAddress = prepared.changeAddress) {
+    validatePreparedIdentityRegistrationTransaction(prepared, signedHex, expectedChangeAddress);
+    const checked = inspectIdentityRegistrationSignatures({
+      txHex: signedHex,
+      prevouts: prepared.prevouts,
+      identityAuthorities: prepared.identityAuthorities
+    });
+    if (checked.signingStatus !== "complete") {
+      throw new RegistrationError("INCOMPLETE_SIGNATURES", "Registration must be fully signed before broadcast.");
+    }
+    // Once submission starts, an RPC error or lost response cannot prove that
+    // the transaction was not accepted. Retain the ID of the exact bytes sent.
+    const txid = fundingTransaction(signedHex).getId();
+    let response;
+    try {
+      response = await this.interface.sendRawTransaction(signedHex);
+    } catch (cause) {
+      throw new RegistrationError("BROADCAST_UNKNOWN",
+        `Registration broadcast outcome is unknown; transaction ${txid} may have been submitted. Check its status before retrying.`,
+        { txid, cause });
+    }
+    if (response == null || response.error != null || response.result !== txid) {
+      throw new RegistrationError("BROADCAST_UNKNOWN",
+        `Registration broadcast outcome is unknown; transaction ${txid} may have been submitted. Check its status before retrying.`,
+        { txid, response });
+    }
+    return response;
+  }
+
   async getChainId() {
     if (this.interface.chain === "VRSC" || this.interface.chain === VRSC_I_ADDRESS) {
       return VRSC_I_ADDRESS;
     } else {
+      // An explicitly configured i-address must not be replaced by an RPC response.
+      try {
+        if (IdentityID.fromAddress(this.interface.chain).toAddress() === this.interface.chain) {
+          return this.interface.chain;
+        }
+      } catch (_) {
+        // Chain names still require RPC resolution.
+      }
+
       const _currres = await this.interface.getCurrency(this.interface.chain);
       if (_currres.error) throw new Error(_currres.error.message);
 
@@ -951,9 +1090,8 @@ class VerusIdInterface {
         continue;
       }
 
-      // Notary evidence eval codes are supported even in strict mode to allow for data included in the transaction as a result of
-      // a signdata style updateidentity request. The data itself isn't verified and must be clearly displayed to the user, or the app
-      // must verify that the key the data is under is indeed in the request signer's namespace
+      // Data uploads also contain notary evidence outputs. This helper extracts
+      // the identity; update builders verify the upload evidence separately.
       if (!outParams.evalCode.eq(new BN(EVALS.EVAL_IDENTITY_PRIMARY))) {
         if (strict && !outParams.evalCode.eq(new BN(EVALS.EVAL_NOTARY_EVIDENCE))) {
           throw new Error("Unsupported params eval code " + outParams.evalCode.toNumber() + " found in transaction output");
@@ -1242,6 +1380,7 @@ class VerusIdInterface {
       const outputNativeValue = nativeValue.add(nativeFeeValue);
 
       if (isReserveTransfer) {
+        if (valueMap.size !== 1) throw new Error("Reserve transfers require exactly one currency in their value map.");
         const reserveDestination = VerusIdInterface.getTxDestination(RESERVE_TRANSFER_DESTINATION);
         const { destCurrencyID, secondReserveID, destSystemID } = VerusIdInterface.getReserveTransferDestinationCurrency(output, valueCurrencies);
         const values = new CurrencyValueMap({
@@ -1396,7 +1535,7 @@ class VerusIdInterface {
     chainId: string,
     maxFee: number
   ) {
-    const maxNativeFeeSatoshis = BigNumber(maxFee).multipliedBy(BigNumber(10).pow(BigNumber(8)));
+    const maxNativeFeeSatoshis = BigNumber(identityUpdateFeeCap(maxFee));
 
     if (!maxNativeFeeSatoshis.isFinite() || maxNativeFeeSatoshis.isNegative()) {
       throw new Error("Maximum fee must be a non-negative finite number.")
@@ -1459,9 +1598,11 @@ class VerusIdInterface {
     utxoList: AddressUtxos,
     allowUnverifiedPrevouts: boolean = false
   ): Promise<AddressUtxos> {
+    assertUnverifiedPrevoutsAllowed(allowUnverifiedPrevouts);
     if (allowUnverifiedPrevouts) return VerusIdInterface.getFundingUtxosFromTransaction(fundedTxHex, utxoList);
 
-    const fundedTx = Transaction.fromHex(fundedTxHex, networks.verus);
+    const fundedTx = fundingTransaction(fundedTxHex);
+    const seen = new Set<string>();
     const txCache: Map<string, typeof Transaction> = new Map();
     const utxosUsed: AddressUtxos = [];
 
@@ -1473,6 +1614,9 @@ class VerusIdInterface {
       witness: Array<any>
     }>) {
       const inputHash = Buffer.from(input.hash).reverse().toString('hex');
+      const outpoint = `${inputHash}:${input.index}`;
+      if (seen.has(outpoint)) throw new Error("Duplicate funding outpoint.");
+      seen.add(outpoint);
       const inputFromList = utxoList.find(utxo => utxo.txid === inputHash && utxo.outputIndex === input.index);
 
       if (!inputFromList) throw new Error("Input not found in UTXO list");
@@ -1489,7 +1633,7 @@ class VerusIdInterface {
 
         if (typeof rawTxHex !== "string") throw new Error("Couldn't verify prevout " + inputHash + ": missing raw transaction hex.");
 
-        prevTx = Transaction.fromHex(rawTxHex, networks.verus);
+        prevTx = fundingTransaction(rawTxHex);
 
         if (prevTx.getId() !== inputHash) {
           throw new Error("Prevout transaction hash mismatch for " + inputHash + ".");
@@ -1505,7 +1649,8 @@ class VerusIdInterface {
       utxosUsed.push({
         ...inputFromList,
         script: prevOut.script.toString('hex'),
-        satoshis: prevOut.value
+        satoshis: prevOut.value,
+        rawTransaction: prevTx.toHex()
       });
     }
 
@@ -1605,7 +1750,8 @@ class VerusIdInterface {
       txid: identityTransaction.getId(),
       outputIndex: identityVout,
       script: identityTransaction.outs[identityVout].script.toString('hex'),
-      satoshis: 0,
+      satoshis: identityTransaction.outs[identityVout].value,
+      rawTransaction: identityTransaction.toHex(),
       height: identityTransactionHeight,
       isspendable: false,
       blocktime: 0 // Filled in to avoid getblock call because blocktime is not currently checked for the ID definition utxo
@@ -1615,164 +1761,443 @@ class VerusIdInterface {
   private static validateIdentityPrimaryAddress(identity: Identity, expectedPrimaryAddress?: string) {
     if (expectedPrimaryAddress == null) return;
 
-    const primaryAddresses = identity.toJson().primaryaddresses || [];
+    // Binary content need not have a lossless daemon JSON representation.
+    const primaryAddresses = (identity.primaryAddresses || []).map(address => address.toAddress());
 
     if (primaryAddresses.length !== 1 || primaryAddresses[0] !== expectedPrimaryAddress) {
       throw new Error("Identity primary address must be exactly " + expectedPrimaryAddress + ".")
     }
   }
 
+  /** Validate definitions returned for required revocation/recovery authorities. */
+  private async validateIdentityUpdateAuthorities(
+    authorities: LocalIdentityUpdateResult["requiredAuthorities"]
+  ): Promise<void> {
+    for (const authority of authorities) {
+      const response = await this.interface.getIdentity(authority.address);
+
+      try {
+        if (response.error || !response.result) {
+          throw new Error("Missing authority");
+        }
+
+        // Check the RPC value before parsing can normalize a malformed version.
+        const rawVersion = response.result.identity.version;
+        if (
+          !Number.isInteger(rawVersion) ||
+          rawVersion! < 1 ||
+          rawVersion! > 3
+        ) {
+          throw new Error("Invalid authority version");
+        }
+
+        const definition = Identity.fromJson(response.result.identity as any);
+        validateIdentityVersion(definition.version);
+
+        // Validate the signing threshold and version-specific authority fields.
+        if (!BN.isBN(definition.minSigs)) {
+          throw new Error("Missing authority threshold");
+        }
+
+        validateIdentityPrimaryAddresses(
+          definition.primaryAddresses,
+          definition.minSigs
+        );
+
+        if (definition.version.gten(2)) {
+          validAddress(definition.revocationAuthority.toAddress()!, true);
+          validAddress(definition.recoveryAuthority.toAddress()!, true);
+        }
+
+        // Bind the returned definition to the requested authority address.
+        if (definition.getIdentityAddress() !== authority.address) {
+          throw new Error("Wrong authority");
+        }
+      } catch (_) {
+        throw new Error(
+          `Identity ${authority.role} authority does not exist on the configured chain.`
+        );
+      }
+    }
+  }
+
+  /**
+   * Build or verify an unfunded update against the raw identity being spent.
+   * Use one height/expiry context for identity edits, evidence, and verification.
+   */
   private async prepareIdentityUpdateTransaction(
     identity: Identity | IdentityUpdateRequestDetails,
     rawIdentityTransaction: string,
     currentHeight?: number,
     updateIdentityTransactionHex?: string,
     parseVdxfObjects: boolean = true,
-    isTestnet = false
+    isTestnet = false,
+    decryptData?: IdentityUpdateDataDecryptor,
+    localUploadCrypto?: LocalIdentityUploadCrypto,
+    chainIAddr?: string
   ): Promise<PreparedIdentityUpdateTransaction> {
-    let height = currentHeight;
+    // Detach caller-owned state before invoking RPC or wallet callbacks.
+    identity = snapshotUpdateRequestValue(identity);
+    localUploadCrypto = captureLocalIdentityUploadCrypto(localUploadCrypto);
+    decryptData = decryptData || localUploadCrypto?.decryptData;
 
-    if (height == null) {
-      height = await this.getCurrentHeight();
-    }
-
-    const identityTransaction = Transaction.fromHex(rawIdentityTransaction, networks.verus);
-    let unfundedTxHex: string;
-    let identityAddress: string;
-    let vout = -1
-    let identityOnOutput: Identity;
-
-    if (identity instanceof Identity) {
-      // If identity is an identity object, assume that the object can be used at the output and that the user filled it in correctly
-      identity.upgradeVersion();
-      unfundedTxHex = createUnfundedIdentityUpdate(identity.toBuffer().toString('hex'), networks.verus, height + 20);
-
-      identityAddress = identity.getIdentityAddress();
-      const identityFromIdTx = VerusIdInterface.getIdentityFromIdTx(identityTransaction, identityAddress, parseVdxfObjects);
-
-      vout = identityFromIdTx.vout;
-      identityOnOutput = identity;
-    } else if (identity instanceof IdentityUpdateRequestDetails) {
-      // If identity is an identityupdaterequest, that only contains a partial identity with the changes the user wants to make, so we
-      // need to fill in the rest of the ID in a way that doesn't trust the server without verification
-
-      if (identity.containsTxid() && identity.getTxidString() !== identityTransaction.getId()) {
-        throw new Error("Identity update request txid does not match the txid of the identity transaction")
-      };
-
-      if (updateIdentityTransactionHex) {
-        unfundedTxHex = updateIdentityTransactionHex;
-      } else {
-        const idCliJson = identity.toCLIJson();
-        const hexRes = (await this.interface.updateIdentity(idCliJson, true));
-
-        if (hexRes.error) throw new Error(hexRes.error.message);
-        else unfundedTxHex = hexRes.result;
+    // Reject unsupported request fields and uploads before any external work.
+    if (identity instanceof IdentityUpdateRequestDetails) {
+      if (
+        !BN.isBN(identity.flags) ||
+        identity.flags.isNeg() ||
+        identity.flags.gtn(31)
+      ) {
+        throw new Error("Unsupported identity update request flags.");
       }
 
-      const unfundedTx = Transaction.fromHex(unfundedTxHex, networks.verus);
-      unfundedTx.ins = [];
-
-      unfundedTxHex = unfundedTx.toHex();
-
-      identityAddress = identity.getIdentityAddress(isTestnet);
-
-      const detailsFromRawTransaction = VerusIdInterface.getIdentityFromIdTx(identityTransaction, identityAddress, parseVdxfObjects);
-      vout = detailsFromRawTransaction.vout;
-
-      const identityFromServer = VerusIdInterface.getIdentityFromIdTx(unfundedTx, identityAddress, parseVdxfObjects, true).identity;
-      const identityFromRawTransaction = detailsFromRawTransaction.identity;
-      const identityFromRawTransactionJson = identityFromRawTransaction.toJson();
-      identityOnOutput = identityFromServer;
-
-      const partialIdentity = identity.identity!.withResolvedContentMultiMap();
-      const serverIdentityJson = identityFromServer.toJson();
-      const partialIdentityJson = partialIdentity.toJson();
-
-      const changedKeys = Object.keys(partialIdentityJson);
-      const contentMultiMapChanged = partialIdentity.containsContentMultiMap();
-
-      // Identity contentmultimap values are per-transaction updates that the daemon
-      // aggregates across identity history. When an update omits contentmultimap,
-      // the next identity output must contain no new entries; the previous output's
-      // entries must not be copied forward or compared as persistent state.
-      if (!contentMultiMapChanged && identityFromServer.contentMultiMap.kvContent.size > 0) {
-        throw new Error("Unexpected contentmultimap entries in identity transaction");
-      }
-
-      // Compare keys that were both changed and unchanged to ensure that changes are the same in funded tx from server
-      let serverChangedKeysComp: { [key: string]: any } = {};
-      let serverUnchangedKeysComp: { [key: string]: any } = {};
-      let fromTxUnchangedKeysComp:  { [key: string]: any } = {};
-
-      // Separate out changed keys and unchanged keys, keeping name in all categories as it
-      // should never be null or changed
-      for (const key of Object.keys(identityFromRawTransactionJson) as Array<keyof VerusCLIVerusIDJson>) {
-        if (key === 'name') {
-          serverChangedKeysComp[key] = serverIdentityJson[key];
-          serverUnchangedKeysComp[key] = serverIdentityJson[key];
-          fromTxUnchangedKeysComp[key] = identityFromRawTransactionJson[key];
-        } else if (changedKeys.includes(key)) {
-          serverChangedKeysComp[key] = serverIdentityJson[key];
-        } else if (key === 'contentmultimap' && !contentMultiMapChanged) {
-          continue;
-        } else {
-          serverUnchangedKeysComp[key] = serverIdentityJson[key];
-          fromTxUnchangedKeysComp[key] = identityFromRawTransactionJson[key];
+      if (identity.expires() || identity.expiryHeight !== undefined) {
+        if (
+          !BN.isBN(identity.expiryHeight) ||
+          identity.expiryHeight.isNeg() ||
+          identity.expiryHeight.bitLength() > 32
+        ) {
+          throw new Error("Invalid identity update request expiry height.");
         }
       }
 
-      const serverKeysChangedCompJson = serverChangedKeysComp as VerusCLIVerusIDJson;
-      const serverKeysUnchangedCompJson = serverUnchangedKeysComp as VerusCLIVerusIDJson;
-      const fromTxKeysUnchangedCompJson = fromTxUnchangedKeysComp as VerusCLIVerusIDJson;
+      if (identity.containsSystem() || identity.systemID !== undefined) {
+        if (!(identity.systemID instanceof IdentityID)) {
+          throw new Error("Invalid identity update request system.");
+        }
 
-      // Ignore cmm fields that contained the "data" field because we can't establish if the cmm and/or encryption was
-      // done correctly yet
+        validAddress(identity.systemID.toAddress()!, true);
+      }
+
+      if (
+        (identity.containsTxid() || identity.txid !== undefined) &&
+        (!Buffer.isBuffer(identity.txid) || identity.txid.length !== 32)
+      ) {
+        throw new Error("Invalid identity update request txid.");
+      }
+
+      const partial = identity.identity;
+
+      if (!(partial instanceof PartialIdentity)) {
+        throw new Error("Identity update request requires a partial identity.");
+      }
+
+      dropEmptyIdentityContent(partial);
+      validatePartialIdentityDefinition(partial);
+      validateLocalIdentityUploadRequest(identity, isTestnet);
+
+      // Uploads need decryption; local construction also needs encryption.
+      if (
+        identity.containsSignData() &&
+        !updateIdentityTransactionHex &&
+        !localUploadCrypto
+      ) {
+        throw new Error(
+          "Local identity data uploads require wallet crypto callbacks."
+        );
+      }
+
+      if (identity.containsSignData() && typeof decryptData !== "function") {
+        throw new Error("Identity data uploads require a decryption callback.");
+      }
+    }
+
+    // Select the chain context once so lock normalization and tx expiry agree.
+    let height = currentHeight;
+
+    if (height == null) {
+      // Lock consensus uses the active chain's next block. A peer-reported
+      // longest chain can be ahead while this endpoint is still synchronizing.
+      const response = await this.interface.getInfo();
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      height = response.result?.blocks;
+    }
+
+    if (
+      !Number.isSafeInteger(height) ||
+      height! < 0 ||
+      height! + 20 >= 500000000
+    ) {
+      throw new Error("Invalid identity update preparation height.");
+    }
+
+    let expiryHeight = height + 20;
+
+    if (
+      identity instanceof IdentityUpdateRequestDetails &&
+      identity.expiryHeight !== undefined
+    ) {
+      if (identity.expiryHeight.lte(new BN(height))) {
+        throw new Error("Identity update request has expired.");
+      }
+
+      expiryHeight = Math.min(expiryHeight, identity.expiryHeight.toNumber());
+    }
+
+    // A supplied template fixes the expiry used for every subsequent lock check.
+    if (
+      identity instanceof IdentityUpdateRequestDetails &&
+      updateIdentityTransactionHex
+    ) {
+      validateIdentityUpdateTransactionSize(updateIdentityTransactionHex);
+      const supplied = fundingTransaction(updateIdentityTransactionHex);
+      verifyTransparentTransaction(supplied);
+
+      if (
+        !Number.isInteger(supplied.expiryHeight) ||
+        supplied.expiryHeight < height + MIN_IDENTITY_UPDATE_EXPIRY_DELTA ||
+        supplied.expiryHeight >= 500000000 ||
+        supplied.expiryHeight > height + MAX_IDENTITY_UPDATE_EXPIRY_DELTA ||
+        (identity.expiryHeight !== undefined &&
+          identity.expiryHeight.lt(new BN(supplied.expiryHeight)))
+      ) {
+        throw new Error(
+          "Supplied identity update expiry must be 4 to 40 blocks ahead and within the request expiry."
+        );
+      }
+
+      expiryHeight = supplied.expiryHeight;
+    }
+
+    if (expiryHeight < height + MIN_IDENTITY_UPDATE_EXPIRY_DELTA) {
+      throw new Error(
+        "Identity update expiry must be at least 4 blocks ahead to satisfy daemon relay policy."
+      );
+    }
+
+    const chainId = chainIAddr || (await this.getChainId());
+    validAddress(chainId, true);
+
+    if (
+      identity instanceof IdentityUpdateRequestDetails &&
+      identity.systemID !== undefined &&
+      identity.systemID.toAddress() !== chainId
+    ) {
+      throw new Error(
+        "Identity update request system does not match the configured chain."
+      );
+    }
+
+    const identityTransaction = fundingTransaction(rawIdentityTransaction);
+    let unfundedTxHex: string;
+    let identityAddress: string;
+    let vout = -1;
+    let identityOnOutput: Identity;
+
+    if (identity instanceof Identity) {
+      // Full identities describe final state: validate the transition without
+      // applying the partial-request normalization rules.
+      validateSupportedIdentityUpdateState(identity);
+      identityAddress = identity.getIdentityAddress();
+
+      const identityFromIdTx = VerusIdInterface.getIdentityFromIdTx(
+        identityTransaction,
+        identityAddress,
+        false
+      );
+      validateSupportedIdentityUpdateState(identityFromIdTx.identity);
+      dropEmptyIdentityContent(identity);
+
+      const requiredAuthorities = validateFullIdentityUpdate(
+        identityFromIdTx.identity,
+        identity,
+        {
+          chainId,
+          nextBlockHeight: height + 1,
+          expiryHeight,
+        }
+      );
+      await this.validateIdentityUpdateAuthorities(requiredAuthorities);
+
+      unfundedTxHex = createUnfundedIdentityUpdate(
+        identity.toBuffer().toString("hex"),
+        networks.verus,
+        expiryHeight
+      );
+      vout = identityFromIdTx.vout;
+      identityOnOutput = identity;
+    } else if (identity instanceof IdentityUpdateRequestDetails) {
+      if (
+        (identity.containsTxid() || identity.txid !== undefined) &&
+        identity.getTxidString() !== identityTransaction.getId()
+      ) {
+        throw new Error(
+          "Identity update request txid does not match the txid of the identity transaction"
+        );
+      }
+
+      identityAddress = identity.getIdentityAddress(isTestnet);
+
+      // Raw source bytes, rather than aggregated RPC JSON, are the merge base.
+      const source = VerusIdInterface.getIdentityFromIdTx(
+        identityTransaction,
+        identityAddress,
+        false
+      );
+      vout = source.vout;
+      verifyIdentityDefinitionOutput(
+        identityTransaction.outs[vout],
+        identityAddress
+      );
+
+      const merged = applyLocalIdentityUpdate(
+        source.identity,
+        identity.identity!,
+        {
+          chainId,
+          nextBlockHeight: height + 1,
+          expiryHeight,
+          hasDataUploads: identity.containsSignData(),
+        }
+      );
+      await this.validateIdentityUpdateAuthorities(merged.requiredAuthorities);
+      const expectedIdentity = merged.identity;
+
+      // Keep the expected ordinary edit separate from generated upload references.
+      // Both supplied and local templates are checked against it below.
+      if (updateIdentityTransactionHex) {
+        unfundedTxHex = updateIdentityTransactionHex;
+      } else {
+        const constructedIdentity =
+          snapshotUpdateRequestValue(expectedIdentity);
+        const evidence = identity.containsSignData()
+          ? await buildLocalIdentityUpdateData({
+              request: identity,
+              chainId,
+              crypto: localUploadCrypto!,
+            })
+          : { outputs: [], contentMultiMap: new Map() };
+
+        for (const [key, values] of evidence.contentMultiMap) {
+          constructedIdentity.contentMultiMap.kvContent.set(key, values);
+        }
+
+        validateIdentityDefinition(constructedIdentity);
+        const local = fundingTransaction(
+          createUnfundedIdentityUpdate(
+            constructedIdentity.toBuffer().toString("hex"),
+            networks.verus,
+            expiryHeight
+          )
+        );
+
+        // References were built for evidence starting at output zero.
+        local.outs = [...evidence.outputs, ...local.outs];
+        unfundedTxHex = local.toHex();
+      }
+
+      validateIdentityUpdateTransactionSize(unfundedTxHex);
+      const template = fundingTransaction(unfundedTxHex);
+      verifyTransparentTransaction(template);
+
+      // Supplied daemon templates can include the old identity input. Funding
+      // adds that verified input itself after validating the output plan.
+      template.ins = [];
+      unfundedTxHex = template.toHex();
+
+      const output = VerusIdInterface.getIdentityFromIdTx(
+        template,
+        identityAddress,
+        false,
+        true
+      );
+      identityOnOutput = output.identity;
+
+      // Remove upload entries from this comparison copy so ordinary fields can
+      // be checked separately. Verify uploads against the original request below.
+      const ordinary = snapshotUpdateRequestValue(identityOnOutput);
+
       if (identity.containsSignData()) {
-        if (serverKeysChangedCompJson.contentmultimap) {
-          for (const [key, value] of identity.signDataMap!.entries()) {
-            const iAddrKey = key.toAddress();
+        for (const [key] of identity.signDataMap!.entries()) {
+          ordinary.contentMultiMap.kvContent.deleteByAddress(key.toAddress());
+        }
+      }
 
-            delete serverKeysChangedCompJson.contentmultimap[iAddrKey];
-          }
-        } else throw new Error("Expected cmm in identity update request");
-      } else if (unfundedTx.outs.length > 1) {
-        // Outputs without signdata should only have an identity output and nothing else
+      const actualPrivate = ordinary.privateAddresses || [];
+      const expectedPrivate = expectedIdentity.privateAddresses || [];
+
+      if (
+        actualPrivate.length !== expectedPrivate.length ||
+        actualPrivate.some(
+          (value, index) =>
+            !value.toBuffer().equals(expectedPrivate[index].toBuffer())
+        )
+      ) {
+        throw new Error(
+          "Private addresses in identity transaction do not match the requested update."
+        );
+      }
+
+      if (
+        !ordinary.contentMultiMap
+          .toBuffer()
+          .equals(expectedIdentity.contentMultiMap.toBuffer())
+      ) {
+        throw new Error(
+          "Unexpected contentmultimap entries in identity transaction"
+        );
+      }
+
+      if (!ordinary.toBuffer().equals(expectedIdentity.toBuffer())) {
+        throw new Error(
+          "Identity update request changes or unchanged identity properties do not match the identity transaction."
+        );
+      }
+
+      if (!identity.containsSignData() && template.outs.length !== 1) {
         throw new Error("Expected only one output in identity update request");
       }
 
-      // Create partialidentity from the server identity json, taking only keys that were submitted to be modified,
-      // and then serialize it and compare it to the partial identity that was submitted, to ensure they are the same.
-      const serverPartialIdChangedComp = PartialIdentity.fromJson(serverKeysChangedCompJson).withResolvedContentMultiMap();
-      if (serverPartialIdChangedComp.toBuffer().toString('hex') !== partialIdentity.toBuffer().toString('hex')) {
-        throw new Error(
-          "Identity update request changes do not appear to match the changes in the identity transaction, got " +
-          JSON.stringify(serverPartialIdChangedComp.toJson()) +
-          " expected " +
-          JSON.stringify(partialIdentity.toJson())
+      // Authenticate and decrypt every requested upload before funding.
+      if (identity.containsSignData()) {
+        await verifyIdentityUpdateData(
+          identity,
+          unfundedTxHex,
+          decryptData!,
+          chainId
         );
       }
+    } else {
+      throw new Error("Invalid identity type");
+    }
 
-      const serverPartialIdUnchangedComp = PartialIdentity.fromJson(serverKeysUnchangedCompJson).withResolvedContentMultiMap();
-      const fromTxPartialIdUnchangedComp = PartialIdentity.fromJson(fromTxKeysUnchangedCompJson).withResolvedContentMultiMap();
-      if (serverPartialIdUnchangedComp.toBuffer().toString('hex') !== fromTxPartialIdUnchangedComp.toBuffer().toString('hex')) {
-        throw new Error(
-          "Unchanged identity properties returned from server do not appear to match the unchanged values from the identity transaction, got " +
-          JSON.stringify(serverPartialIdUnchangedComp.toJson()) +
-          " expected " +
-          JSON.stringify(fromTxPartialIdUnchangedComp.toJson())
-        );
-      }
-    } else throw new Error("Invalid identity type");
+    // Even unfunded results must contain a canonical, zero-value definition.
+    // Return the decoded output so later policy checks use the actual bytes.
+    validateIdentityUpdateTransactionSize(unfundedTxHex);
+    const outputTransaction = fundingTransaction(unfundedTxHex);
+    verifyTransparentTransaction(outputTransaction);
+    const outputDefinition = VerusIdInterface.getIdentityFromIdTx(
+      outputTransaction,
+      identityAddress,
+      parseVdxfObjects,
+      true
+    );
+    verifyIdentityDefinitionOutput(
+      outputTransaction.outs[outputDefinition.vout],
+      identityAddress,
+      true
+    );
+    identityOnOutput = outputDefinition.identity;
+
+    verifyIdentityDefinitionOutput(
+      identityTransaction.outs[vout],
+      identityAddress
+    );
 
     return {
       height,
+      expiryHeight,
+      chainId,
       identityTransaction,
       identityAddress,
       identityOnOutput,
       unfundedTxHex,
-      vout
-    }
+      vout,
+    };
   }
 
   // When using this function with a remote RPC server, PLEASE USE THE VERUSID DECODED FROM rawIdentityTransaction
@@ -1786,24 +2211,33 @@ class VerusIdInterface {
     identityTransactionHeight: number,
     utxoList?: GetAddressUtxosResponse["result"],
     chainIAddr?: string,
-    maxFee: number = 5,
+    maxFee?: number,
     fundRawTransactionResult?: FundRawTransactionResponse["result"],
     currentHeight?: number,
     updateIdentityTransactionHex?: string,
     parseVdxfObjects: boolean = true,
     isTestnet = false, // This parameter is only necessary if you pass in an IdentityUpdateRequestDetails
-    allowUnverifiedPrevouts: boolean = false
+    allowUnverifiedPrevouts: boolean = false,
+    decryptData?: IdentityUpdateDataDecryptor,
+    localUploadCrypto?: LocalIdentityUploadCrypto
   ): Promise<IdentityUpdateTransactionResult> {
-    const utxos = utxoList == null ? undefined : getUtxos(utxoList);
+    assertUnverifiedPrevoutsAllowed(allowUnverifiedPrevouts);
+    if (maxFee !== undefined) identityUpdateFeeCap(maxFee);
+    const utxos = utxoList == null ? undefined : snapshotUpdateRequestValue(getUtxos(utxoList));
+    fundRawTransactionResult = snapshotUpdateRequestValue(fundRawTransactionResult);
     const preparedIdentityUpdate = await this.prepareIdentityUpdateTransaction(
       identity,
       rawIdentityTransaction,
       currentHeight,
       updateIdentityTransactionHex,
       parseVdxfObjects,
-      isTestnet
+      isTestnet,
+      decryptData,
+      localUploadCrypto,
+      chainIAddr
     );
 
+    const feeLimit = maxFee === undefined ? defaultIdentityUpdateFeeCap(preparedIdentityUpdate.unfundedTxHex) : maxFee;
     let fundedTxHex;
 
     if (utxos == null) {
@@ -1824,7 +2258,8 @@ class VerusIdInterface {
       else fundedTxHex = _fundRawTxRes.result.hex;
     } else fundedTxHex = fundRawTransactionResult.hex;
 
-    const chainId = chainIAddr != null ? chainIAddr : await this.getChainId();
+    validateIdentityUpdateTransactionSize(fundedTxHex);
+    const chainId = preparedIdentityUpdate.chainId;
     const deltas: Map<string, BigNumber> = new Map();
 
     if (utxos) {
@@ -1845,7 +2280,7 @@ class VerusIdInterface {
       if (!validation.valid) throw new Error(validation.message);
 
       VerusIdInterface.validateNoUnexpectedCurrencySent(validation);
-      VerusIdInterface.validateFees(validation, new Map(), chainId, maxFee);
+      VerusIdInterface.validateFees(validation, new Map(), chainId, feeLimit);
       VerusIdInterface.addValidationFeesToDeltas(validation, deltas);
 
       const completeIdentityUpdate = VerusIdInterface.completeIdentityUpdateTransaction(
@@ -1862,11 +2297,22 @@ class VerusIdInterface {
         identityTransactionHeight
       ))
 
+      const fundingApproval = createIdentityUpdateFundingApproval({
+        txHex: completeIdentityUpdate, unfundedTxHex: preparedIdentityUpdate.unfundedTxHex,
+        systemId: chainId, changeAddress, nativeFee: validation.fees?.[chainId] || "0",
+        fees: {...validation.fees}, explicitFees: {}, maxFee: identityUpdateFeeCap(feeLimit),
+        identity: {txid: preparedIdentityUpdate.identityTransaction.getId(), outputIndex: preparedIdentityUpdate.vout,
+          identityAddress: preparedIdentityUpdate.identityAddress},
+      }, verifiedFundingUtxos, allowUnverifiedPrevouts, {
+        chainId, nextBlockHeight: preparedIdentityUpdate.height + 1,
+      });
+
       return {
         hex: completeIdentityUpdate,
         utxos: verifiedFundingUtxos,
         identity: preparedIdentityUpdate.identityOnOutput,
-        deltas
+        deltas,
+        fundingApproval
       };
     } else {
       return {
@@ -1887,8 +2333,40 @@ class VerusIdInterface {
     utxoList: GetAddressUtxosResponse["result"],
     options: IdentityUpdateCurrencyTransferOptions = {}
   ): Promise<IdentityUpdateTransactionResult> {
-    const utxos = getUtxos(utxoList);
+    const localUploadCrypto = captureLocalIdentityUploadCrypto(options.localUploadCrypto);
+    options = { ...snapshotUpdateRequestValue({ ...options, localUploadCrypto: undefined }), localUploadCrypto };
+    currencyTransferOutputs = snapshotUpdateRequestValue(currencyTransferOutputs);
+    assertUnverifiedPrevoutsAllowed(options.allowUnverifiedPrevouts ?? false);
+    if (options.maxFee !== undefined) identityUpdateFeeCap(options.maxFee);
+    const utxos = snapshotUpdateRequestValue(getUtxos(utxoList));
     if (!currencyTransferOutputs.length) throw new Error("Must provide at least one explicit currency transfer output.");
+
+    // Retain the caller's approved ownership policy before any RPC await. A
+    // copied address list prevents later form changes from relaxing this check.
+    const expectedPrimaryAddress = options.expectedIdentityPrimaryAddress == null ? changeAddress : options.expectedIdentityPrimaryAddress;
+    const suppliedPrimaryAddresses = options.expectedIdentityPrimaryAddresses;
+    const expectedMinimumSignatures = options.expectedIdentityMinimumSignatures;
+    const hasExpectedPolicy = suppliedPrimaryAddresses !== undefined || expectedMinimumSignatures !== undefined;
+    let expectedPrimaryAddresses: string[] | undefined;
+    if (hasExpectedPolicy) {
+      if (options.expectedIdentityPrimaryAddress !== undefined) {
+        throw new Error("Choose either an expected primary address or a complete expected identity signing policy.");
+      }
+      if (!Array.isArray(suppliedPrimaryAddresses) || suppliedPrimaryAddresses.length === 0 || suppliedPrimaryAddresses.length > 25 ||
+          !Number.isInteger(expectedMinimumSignatures) || expectedMinimumSignatures! < 1 ||
+          expectedMinimumSignatures! > suppliedPrimaryAddresses.length || expectedMinimumSignatures! > 13) {
+        throw new Error("Expected identity signing policy requires primary addresses and a valid minimum signature count.");
+      }
+      expectedPrimaryAddresses = [...suppliedPrimaryAddresses];
+      try {
+        if (new Set(expectedPrimaryAddresses).size !== expectedPrimaryAddresses.length ||
+            expectedPrimaryAddresses.some(primary => typeof primary !== "string" || KeyID.fromAddress(primary).toAddress() !== primary)) {
+          throw new Error("Invalid primary address.");
+        }
+      } catch (_) {
+        throw new Error("Expected identity primary addresses must be distinct transparent R-addresses.");
+      }
+    }
 
     const preparedIdentityUpdate = await this.prepareIdentityUpdateTransaction(
       identity,
@@ -1896,25 +2374,39 @@ class VerusIdInterface {
       options.currentHeight,
       options.updateIdentityTransactionHex,
       options.parseVdxfObjects == null ? true : options.parseVdxfObjects,
-      options.isTestnet == null ? false : options.isTestnet
+      options.isTestnet == null ? false : options.isTestnet,
+      options.decryptData,
+      options.localUploadCrypto,
+      options.chainIAddr
     );
 
-    VerusIdInterface.validateIdentityPrimaryAddress(
-      preparedIdentityUpdate.identityOnOutput,
-      options.expectedIdentityPrimaryAddress == null ? changeAddress : options.expectedIdentityPrimaryAddress
-    );
+    if (expectedPrimaryAddresses) {
+      const outputIdentity = preparedIdentityUpdate.identityOnOutput;
+      const outputPrimaryAddresses = (outputIdentity.primaryAddresses || []).map(address => address.toAddress());
+      if (outputPrimaryAddresses.length !== expectedPrimaryAddresses.length ||
+          outputPrimaryAddresses.some((primary, index) => primary !== expectedPrimaryAddresses![index]) ||
+          !outputIdentity.minSigs?.eqn(expectedMinimumSignatures!)) {
+        throw new Error("Identity signing policy does not match the expected primary addresses and minimum signatures.");
+      }
+    } else {
+      VerusIdInterface.validateIdentityPrimaryAddress(preparedIdentityUpdate.identityOnOutput, expectedPrimaryAddress);
+    }
 
-    const chainId = options.chainIAddr != null ? options.chainIAddr : await this.getChainId();
+    const chainId = preparedIdentityUpdate.chainId;
     const currencyTransferTxHex = VerusIdInterface.createUnfundedCurrencyTransferTransaction(
       chainId,
       currencyTransferOutputs,
-      preparedIdentityUpdate.height + 20
+      preparedIdentityUpdate.expiryHeight
     );
     const combinedUnfundedTxHex = VerusIdInterface.combineUnfundedTransactions(
       preparedIdentityUpdate.unfundedTxHex,
       currencyTransferTxHex
     );
 
+    validateIdentityUpdateTransactionSize(combinedUnfundedTxHex);
+    const expectedExplicitFees = VerusIdInterface.getExpectedFeesFromCurrencyTransferOutputs(currencyTransferOutputs, chainId);
+    const feeLimit = options.maxFee === undefined ? defaultIdentityUpdateFeeCap(combinedUnfundedTxHex,
+      (expectedExplicitFees.get(chainId) || new BigNumber(0)).toFixed(0)) : options.maxFee;
     let fundedTxHex;
 
     if (options.fundRawTransactionResult == null) {
@@ -1933,6 +2425,7 @@ class VerusIdInterface {
       else fundedTxHex = _fundRawTxRes.result.hex;
     } else fundedTxHex = options.fundRawTransactionResult.hex;
 
+    validateIdentityUpdateTransactionSize(fundedTxHex);
     const verifiedFundingUtxos = await this.getVerifiedFundingUtxosFromTransaction(
       fundedTxHex,
       utxos,
@@ -1950,11 +2443,10 @@ class VerusIdInterface {
     if (!validation.valid) throw new Error(validation.message);
 
     const expectedSent = VerusIdInterface.getExpectedSentFromCurrencyTransferOutputs(currencyTransferOutputs);
-    const expectedExplicitFees = VerusIdInterface.getExpectedFeesFromCurrencyTransferOutputs(currencyTransferOutputs, chainId);
     const deltas: Map<string, BigNumber> = new Map();
 
     VerusIdInterface.validateCurrencyTransferSent(validation, expectedSent);
-    VerusIdInterface.validateFees(validation, expectedExplicitFees, chainId, options.maxFee == null ? 5 : options.maxFee);
+    VerusIdInterface.validateFees(validation, expectedExplicitFees, chainId, feeLimit);
     VerusIdInterface.addValidationFeesToDeltas(validation, deltas);
     VerusIdInterface.addValidationSentToDeltas(validation, deltas);
 
@@ -1972,11 +2464,23 @@ class VerusIdInterface {
       identityTransactionHeight
     ))
 
+    const fundingApproval = createIdentityUpdateFundingApproval({
+      txHex: completeIdentityUpdate, unfundedTxHex: combinedUnfundedTxHex,
+      systemId: chainId, changeAddress, nativeFee: validation.fees?.[chainId] || "0",
+      fees: {...validation.fees}, explicitFees: Object.fromEntries([...expectedExplicitFees].map(([id, value]) => [id, value.toFixed(0)])),
+      maxFee: identityUpdateFeeCap(feeLimit),
+      identity: {txid: preparedIdentityUpdate.identityTransaction.getId(), outputIndex: preparedIdentityUpdate.vout,
+        identityAddress: preparedIdentityUpdate.identityAddress},
+    }, verifiedFundingUtxos, options.allowUnverifiedPrevouts === true, {
+      chainId, nextBlockHeight: preparedIdentityUpdate.height + 1,
+    });
+
     return {
       hex: completeIdentityUpdate,
       utxos: verifiedFundingUtxos,
       identity: preparedIdentityUpdate.identityOnOutput,
-      deltas
+      deltas,
+      fundingApproval
     };
   }
 
@@ -1992,8 +2496,8 @@ class VerusIdInterface {
     currentHeight?: number,
     allowUnverifiedPrevouts: boolean = false
   ): Promise<IdentityUpdateTransactionResult> {
-    const identity = new Identity();
-    identity.fromBuffer(_identity.toBuffer());
+    assertUnverifiedPrevoutsAllowed(allowUnverifiedPrevouts);
+    const identity = snapshotUpdateRequestValue(_identity);
 
     identity.clearContentMultiMap();
     identity.revoke();
@@ -2027,8 +2531,8 @@ class VerusIdInterface {
     currentHeight?: number,
     allowUnverifiedPrevouts: boolean = false
   ): Promise<IdentityUpdateTransactionResult> {
-    const identity = new Identity();
-    identity.fromBuffer(_identity.toBuffer());
+    assertUnverifiedPrevoutsAllowed(allowUnverifiedPrevouts);
+    const identity = snapshotUpdateRequestValue(_identity);
 
     identity.clearContentMultiMap();
     identity.unrevoke();
@@ -2059,9 +2563,13 @@ class VerusIdInterface {
   signUpdateIdentityTransaction(
     unsignedTxHex: string,
     inputs: GetAddressUtxosResponse["result"],
-    keys: string[][]
+    keys: string[][],
+    fundingApproval?: IdentityUpdateFundingApproval,
+    lockContext?: IdentityLockContext
   ): string {
+    validateIdentityUpdateTransactionSize(unsignedTxHex);
     const utxos = getUtxos(inputs);
+    if (fundingApproval) verifyIdentityUpdateFunding(fundingApproval, unsignedTxHex, utxos, lockContext);
     const txb = smarttxs.getFundedTxBuilder(unsignedTxHex, networks.verus, utxos.map(x => Buffer.from(x.script, 'hex')));
 
     for (let i = 0; i < keys.length; i++) {
@@ -2078,7 +2586,10 @@ class VerusIdInterface {
       }
     }
 
-    return txb.build().toHex();
+    const signedHex = txb.build().toHex();
+    validateIdentityUpdateTransactionSize(signedHex);
+    if (fundingApproval) verifyIdentityUpdateFunding(fundingApproval, signedHex, utxos, lockContext);
+    return signedHex;
   }
 
   private async createGenericEnvelope<T extends GenericEnvelope, I>(

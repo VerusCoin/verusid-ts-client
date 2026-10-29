@@ -118,13 +118,12 @@ describe("createUnfundedCurrencyTransferTransaction", () => {
     );
   });
 
-  test("creates multi-currency reserve transfers with native fees and refund destinations", () => {
+  test("creates a single-currency reserve transfer with native fees and refund destinations", () => {
     const refundDestination = createTransferDestination(DESTINATION_ADDRESS);
     const sourceDestination = createTransferDestination(DESTINATION_ADDRESS);
     const tx = createTx([
       createCurrencyTransferOutput({
         currencies: {
-          [VERUSTEST_I_ADDR]: NATIVE_SATOSHIS,
           [TOKEN_CURRENCY]: TOKEN_SATOSHIS,
         },
         address: sourceDestination,
@@ -135,15 +134,11 @@ describe("createUnfundedCurrencyTransferTransaction", () => {
     const outputInfo = unpackOutput(tx);
     const reserveTransfer = outputInfo.params![0].data as ReserveTransfer;
 
-    expect(tx.outs[0].value).toBe(
-      Number(NATIVE_SATOSHIS) + Number(RESERVE_TRANSFER_FEE_SATOSHIS)
-    );
+    expect(tx.outs[0].value).toBe(Number(RESERVE_TRANSFER_FEE_SATOSHIS));
     expect(outputInfo.fees[VERUSTEST_I_ADDR].toString()).toBe(
       RESERVE_TRANSFER_FEE_SATOSHIS
     );
-    expect(
-      reserveTransfer.reserveValues.valueMap.get(VERUSTEST_I_ADDR)!.toString()
-    ).toBe(NATIVE_SATOSHIS);
+    expect(reserveTransfer.reserveValues.valueMap.size).toBe(1);
     expect(
       reserveTransfer.reserveValues.valueMap.get(TOKEN_CURRENCY)!.toString()
     ).toBe(TOKEN_SATOSHIS);
@@ -165,6 +160,31 @@ describe("createUnfundedCurrencyTransferTransaction", () => {
     ).toBe(DESTINATION_ADDRESS);
     expect(sourceDestination.hasAuxDests()).toBe(false);
     expect(sourceDestination.auxDests).toHaveLength(0);
+  });
+
+  test.each([
+    { [VERUSTEST_I_ADDR]: NATIVE_SATOSHIS, [TOKEN_CURRENCY]: TOKEN_SATOSHIS },
+    { [TOKEN_CURRENCY]: TOKEN_SATOSHIS, [TEST_ID_3.identity.identityaddress]: "1" },
+  ])("rejects reserve transfers containing multiple currencies: %j", currencies => {
+    expect(() => createTx([createCurrencyTransferOutput({
+      currencies,
+      convertto: VERUSTEST_I_ADDR,
+    })])).toThrow(/one currency|single.currency|exactly one/i);
+  });
+
+  test("preserves multiple currencies in ordinary reserve outputs", () => {
+    const currencies = {
+      [VERUSTEST_I_ADDR]: NATIVE_SATOSHIS,
+      [TOKEN_CURRENCY]: TOKEN_SATOSHIS,
+      [TEST_ID_3.identity.identityaddress]: "1",
+    };
+    const tx = createTx([createCurrencyTransferOutput({ currencies })]);
+    const outputInfo = unpackOutput(tx);
+
+    expect(outputInfo.params![0].eval).toBe(EVALS.EVAL_RESERVE_OUTPUT);
+    for (const [currency, value] of Object.entries(currencies)) {
+      expect(outputInfo.values[currency].toString()).toBe(value);
+    }
   });
 
   test("keeps explicit non-native reserve-transfer fees out of the native output value", () => {

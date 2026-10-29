@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-20",
+  "daemonVersion": "1.2.18",
+  "version": 2000753,
+  "protocolVersion": 170010,
+  "chainId": "iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq",
+  "chain": "VRSCTEST",
+  "height": 1283527,
+  "bestBlockHash": "00000004ecdcc0a6a7661ea9d73029fd09debe7d5f24ca56b94cfe01eeeb727a",
+  "availableReferenceMethods": [
+    "signdata",
+    "decryptdata",
+    "updateidentity",
+    "fundrawtransaction"
+  ],
+  "nativeAdapter": "librustzcash and libsodium from local VerusCoin build; not the Mobile bridge",
+  "broadcast": false
+}
