@@ -354,7 +354,7 @@ function approvedOutput(
     return { values, fees, identity: false };
   }
 
-  return { values: ordinaryOutput(output, systemID), fees, identity: false };
+  return { values: ordinaryOutput(output, systemID, undefined, true), fees, identity: false };
 }
 
 function verify(

@@ -26,6 +26,6 @@ declare function parseScript<T extends {
  * handled by their callers. An expected recipient restricts payment/change
  * to that single destination, even though funding may use multiple signers.
  */
-declare function ordinaryOutput(output: Output, systemID: string, expectedRecipient?: string): Amounts;
+declare function ordinaryOutput(output: Output, systemID: string, expectedRecipient?: string, allowIndexMaster?: boolean): Amounts;
 export { amount, nativeAmount, add, sameAmounts, validAddress, amountMap, transaction, parseScript, ordinaryOutput, requireCondition, };
 export type { Amounts, Output };

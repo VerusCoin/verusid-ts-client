@@ -8,6 +8,7 @@ import {
   toBase58Check,
   SmartTransactionScript,
   TokenOutput,
+  TxDestination,
 } from "verus-typescript-primitives";
 
 // These helpers keep verification arithmetic and decoding separate from the
@@ -152,7 +153,8 @@ function parseScript<
 function ordinaryOutput(
   output: Output,
   systemID: string,
-  expectedRecipient?: string
+  expectedRecipient?: string,
+  allowIndexMaster = false
 ): Amounts {
   // The native balance comes only from nValue, never from the reserve payload.
   const values = new Map([[systemID, nativeAmount(output.value)]]);
@@ -224,8 +226,13 @@ function ordinaryOutput(
     master.destinations.every((dest, i) =>
       dest.toBuffer().equals(condition.destinations[i].toBuffer())
     );
+  // A tag is permitted only on an explicitly approved payment output.
+  const indexMaster = allowIndexMaster &&
+    master.m.eqn(1) && master.n.eqn(1) && master.destinations.length === 1 &&
+    master.destinations[0].type.eq(TxDestination.TYPE_INDEX) &&
+    master.destinations[0].data.toBuffer().length === PUBLIC_KEY_HASH_LENGTH;
   requireCondition(
-    emptyMaster || sameMaster,
+    emptyMaster || sameMaster || indexMaster,
     "Unexpected alternate output authorization."
   );
 
