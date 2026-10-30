@@ -30,6 +30,7 @@ import {
   GenericResponse,
   GenericResponseInterface,
   VERUSPAY_VERSION_3,
+  VERUSPAY_VERSION_4,
   OrdinalVDXFObject,
   AuthenticationRequestOrdinalVDXFObject,
   IdentityUpdateRequestOrdinalVDXFObject,
@@ -53,6 +54,8 @@ import {
   TokenOutput,
   TOKEN_OUTPUT_VERSION_MULTIVALUE,
   TxDestination,
+  UnknownID,
+  decodeDestination,
   KeyID,
   IdentityID,
   DEST_ID,
@@ -122,6 +125,7 @@ const BN_TYPE_REF = new BN(0, 10);
 type BNValue = typeof BN_TYPE_REF;
 const RESERVE_TRANSFER_DEFAULT_PER_STEP_FEE = new BN(10000, 10);
 const RESERVE_TRANSFER_DESTINATION_BYTE_DIVISOR = 128;
+const VDXF_TAG_ADDRESS_VERSION = 137;
 
 export type CurrencyTransferOutput = {
   currencies: {
@@ -140,6 +144,7 @@ export type CurrencyTransferOutput = {
   mintnew?: boolean;
   importtosource?: boolean;
   destsystem?: string;
+  /** Resolved X-address from a VerusPay invoice tag. */
   vdxftag?: string;
 }
 
@@ -894,7 +899,7 @@ class VerusIdInterface {
 
     const inv = new VerusPayInvoice({
       details: details,
-      version: VERUSPAY_VERSION_3
+      version: details.isTagged() ? VERUSPAY_VERSION_4 : VERUSPAY_VERSION_3
     });
 
     if (signingIdIAddr && primaryAddrWif) {
@@ -1353,7 +1358,10 @@ class VerusIdInterface {
     txb.setVersionGroupId(0x892f2085);
 
     for (const output of currencyTransferOutputs) {
-      if (output.vdxftag != null) throw new Error("VDXF tags not fully implemented");
+      const tagDestination = output.vdxftag == null ? undefined : new TxDestination(
+        new UnknownID(decodeDestination(output.vdxftag, VDXF_TAG_ADDRESS_VERSION)),
+        TxDestination.TYPE_INDEX
+      );
       if (output.address == null) throw new Error("Must specify address for all outputs");
 
       const valueMap = VerusIdInterface.getCurrencyValueMap(output);
@@ -1404,7 +1412,7 @@ class VerusIdInterface {
           evalCode: new BN(EVALS.EVAL_NONE),
           m: new BN(1, 10),
           n: new BN(1, 10),
-          destinations: [reserveDestination]
+          destinations: [tagDestination || reserveDestination]
         });
         const outParams = new OptCCParams({
           version: new BN(3, 10),
@@ -1424,16 +1432,17 @@ class VerusIdInterface {
 
         tokenValueMap.delete(chainId);
 
-        if (tokenValueMap.size === 0 && output.address.typeNoFlags().eq(DEST_PKH)) {
+        if (!tagDestination && tokenValueMap.size === 0 && output.address.typeNoFlags().eq(DEST_PKH)) {
           txb.addOutput(output.address.getAddressString(), outputNativeValue.toNumber());
         } else {
           const destination = VerusIdInterface.getTxDestination(output.address);
+          const masterDestinations = tagDestination ? [tagDestination] : tokenValueMap.size === 0 ? [] : [destination];
           const outMaster = new OptCCParams({
             version: new BN(3, 10),
             evalCode: new BN(EVALS.EVAL_NONE),
-            m: tokenValueMap.size === 0 ? new BN(0, 10) : new BN(1, 10),
-            n: tokenValueMap.size === 0 ? new BN(0, 10) : new BN(1, 10),
-            destinations: tokenValueMap.size === 0 ? [] : [destination]
+            m: new BN(masterDestinations.length),
+            n: new BN(masterDestinations.length),
+            destinations: masterDestinations
           });
           const outParams = tokenValueMap.size === 0 ?
             new OptCCParams({

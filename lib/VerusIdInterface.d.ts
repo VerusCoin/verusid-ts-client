@@ -26,6 +26,7 @@ export type CurrencyTransferOutput = {
     mintnew?: boolean;
     importtosource?: boolean;
     destsystem?: string;
+    /** Resolved X-address from a VerusPay invoice tag. */
     vdxftag?: string;
 };
 export type IdentityUpdateCurrencyTransferOptions = {

@@ -602,3 +602,85 @@ test('rejects a forged balanced approval containing a multi-currency reserve tra
   const forged = {...approved, txHex: changed.toHex(), unfundedTxHex: planned.toHex()};
   expect(() => verifyIdentityUpdateFunding(forged)).toThrow('Invalid explicit reserve-transfer encoding');
 });
+
+const INVOICE_TAG = 'xA91QPpBrHZto92NCU5KEjCqRveS4dAPrf';
+const taggedOutput = (currencies: Values) => Transaction.fromHex(
+  VerusIdInterface.createUnfundedCurrencyTransferTransaction(CHAIN,
+    [{currencies, address: destination(MAIN), vdxftag: INVOICE_TAG}], HEIGHT + 20), networks.verus,
+).outs[0];
+
+const taggedPaymentFixture = (currencies: Values) => {
+  const f = fixture('combined', undefined, currencies);
+  f.funded.outs[1] = taggedOutput(currencies);
+  const build = () => f.client.createUpdateIdentityWithCurrencyTransferTransaction(
+    f.identity, CHANGE, f.sourceId.toHex(), HEIGHT - 1,
+    [{currencies, address: destination(MAIN), vdxftag: INVOICE_TAG}], f.utxos, {
+      chainIAddr: CHAIN, maxFee: 0.001, currentHeight: HEIGHT,
+      fundRawTransactionResult: {hex: f.funded.toHex(), fee: 0.0001, changepos: 2},
+      expectedIdentityPrimaryAddresses: [MAIN], expectedIdentityMinimumSignatures: 1,
+    }
+  );
+  return {...f, build};
+};
+
+const taggedCurrencies: [string, Values][] = [
+  ['native', {[CHAIN]: '20000'}],
+  ['token', {[TOKEN]: '777'}],
+  ['native and token', {[CHAIN]: '20000', [TOKEN]: '777'}],
+];
+
+test.each(taggedCurrencies)('funds and independently verifies an identity update with a tagged %s invoice payment',
+  async (_name, currencies) => {
+    const f = taggedPaymentFixture(currencies);
+    const result = await f.build();
+    const approved = approvalOf(result);
+    expect(verifyIdentityUpdateFunding(approved, result.hex)).toBe(true);
+    const tx = Transaction.fromHex(result.hex, networks.verus);
+    expect(tx.outs[1].script.equals(taggedOutput(currencies).script)).toBe(true);
+    expect(result.deltas.get(TOKEN)?.toFixed(0) || '0').toBe(currencies[TOKEN] ? '-' + currencies[TOKEN] : '0');
+  }
+);
+
+test.each(['changed', 'removed'] as const)('rejects a %s invoice tag after funding approval', async mutation => {
+  const currencies = {[CHAIN]: '20000'};
+  const f = taggedPaymentFixture(currencies);
+  const result = await f.build();
+  const changed = Transaction.fromHex(result.hex, networks.verus);
+  if (mutation === 'removed') {
+    changed.outs[1].script = outputs(currencies)[0].script;
+  } else {
+    const smart = new SmartTransactionScript();
+    smart.fromBuffer(changed.outs[1].script);
+    const bytes = smart.masterOptCC.destinations[0].data.toBuffer();
+    // The parsed UnknownID stores its bytes as .bytes. Mutate its 20-byte tag
+    // while keeping the native amount and recipient exactly unchanged.
+    (smart.masterOptCC.destinations[0].data as any).bytes = Buffer.from(bytes);
+    (smart.masterOptCC.destinations[0].data as any).bytes[0] ^= 1;
+    changed.outs[1].script = smart.toBuffer();
+  }
+  expect(() => verifyIdentityUpdateFunding(approvalOf(result), changed.toHex())).toThrow();
+});
+
+test('rejects a tag injected into an approved untagged invoice payment', async () => {
+  const currencies = {[CHAIN]: '20000'};
+  const f = fixture('combined', undefined, currencies);
+  const result = await f.build();
+  const changed = Transaction.fromHex(result.hex, networks.verus);
+  changed.outs[1] = taggedOutput(currencies);
+  expect(() => verifyIdentityUpdateFunding(approvalOf(result), changed.toHex())).toThrow();
+});
+
+test.each(['threshold', 'length', 'type'] as const)('rejects a malformed %s in an explicitly approved invoice tag', async invalid => {
+  const result = await taggedPaymentFixture({[CHAIN]: '20000'}).build();
+  const approval = approvalOf(result);
+  const candidate = Transaction.fromHex(result.hex, networks.verus);
+  const template = Transaction.fromHex(approval.unfundedTxHex, networks.verus);
+  const smart = new SmartTransactionScript();
+  smart.fromBuffer(candidate.outs[1].script);
+  if (invalid === 'threshold') smart.masterOptCC.m = new BN(0);
+  else if (invalid === 'length') (smart.masterOptCC.destinations[0].data as any).bytes = Buffer.alloc(19, 1);
+  else smart.masterOptCC.destinations[0].type = TxDestination.TYPE_QUANTUM;
+  candidate.outs[1].script = smart.toBuffer();
+  template.outs[1].script = candidate.outs[1].script;
+  expect(() => verifyIdentityUpdateFunding({...approval, txHex: candidate.toHex(), unfundedTxHex: template.toHex()})).toThrow();
+});

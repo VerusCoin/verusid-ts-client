@@ -261,12 +261,12 @@ describe("createUnfundedCurrencyTransferTransaction", () => {
         " must be a non-negative integer satoshi value.",
     ],
     [
-      "VDXF tag",
+      "VDXF tag with an identity-address prefix",
       () =>
         createCurrencyTransferOutput({
           vdxftag: "iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq",
         }),
-      "VDXF tags not fully implemented",
+      "Invalid destination address",
     ],
     [
       "reserve fee on a non-reserve output",
