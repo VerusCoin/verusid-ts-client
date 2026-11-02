@@ -1,6 +1,6 @@
 import { AxiosRequestConfig } from "axios";
 import { GetIdentityResponse, LoginConsentRequest, LoginConsentChallenge, LoginConsentProvisioningRequest, LoginConsentProvisioningChallenge, LoginConsentResponse, LoginConsentDecision, LoginConsentProvisioningDecision, LoginConsentProvisioningResponse, SignedSessionObject, SignedSessionObjectData, VerusPayInvoice, VerusPayInvoiceDetails, Identity, GetAddressUtxosResponse, FundRawTransactionResponse, IdentityUpdateRequestDetails, GenericRequest, GenericRequestInterface, GenericResponse, GenericResponseInterface, TransferDestination } from "verus-typescript-primitives";
-import { VerusdRpcInterface } from "verusd-rpc-ts-client";
+import { RegistrationRpc } from "./identity/registrationRpc";
 import BigNumber from "bignumber.js";
 import { APIAuthData, RPCRequestOverride } from "verusd-rpc-ts-client/lib/VerusdRpcInterface";
 import { CreateIdentityRegistrationTransactionRequest, CreateNameReservationTransactionRequest, PreparedIdentityRegistrationTransaction, SignIdentityRegistrationTransactionArgs, MergeIdentityRegistrationTransactionsArgs, ResolveIdentityRegistrationRequest } from "./identity/registration";
@@ -60,7 +60,7 @@ export type IdentityUpdateTransactionResult = {
     fundingApproval?: IdentityUpdateFundingApproval;
 };
 declare class VerusIdInterface {
-    interface: VerusdRpcInterface;
+    interface: RegistrationRpc;
     constructor(chain: string, baseURL: string, config?: AxiosRequestConfig, rpcRequestOverride?: RPCRequestOverride, APIAuth?: APIAuthData);
     getCurrentHeight(): Promise<number>;
     /** Resolve and quote a modern commit/reveal registration without broadcasting. */

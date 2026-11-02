@@ -53,7 +53,7 @@
     "bignumber.js": "9.1.0",
     "bn.js": "5.2.3",
     "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#cfe8c45e43ac7846d73083501aa42665ec9f85d9",
-    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client#f2af29b71d231f50bfac7a8aca852e9facd01b92"
+    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client#cf9d52dc1b255492fbc18593ffb51ffbeeb0e326"
   },
   "resolutions": {
     "verus-typescript-primitives": "git+https://github.com/VerusCoin/verus-typescript-primitives.git#cfe8c45e43ac7846d73083501aa42665ec9f85d9",

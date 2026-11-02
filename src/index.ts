@@ -21,6 +21,10 @@ export type {
   NameReservationTransactionResult
 } from "./identity/registration";
 export { RegistrationError } from "./identity/registrationPolicy";
+export type {
+  RegistrationRpc,
+  RegistrationRequestMany
+} from "./identity/registrationRpc";
 export {
   verifyRegistrationFunding,
   verifyIdentityRegistrationFunding

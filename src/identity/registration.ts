@@ -32,7 +32,11 @@ import {
   resolveIdentityRegistrationName,
   validateIdentityForRegistration,
 } from "verus-typescript-primitives";
-import { VerusdRpcInterface } from "verusd-rpc-ts-client";
+import {
+  RegistrationRpc,
+  createRegistrationRpc,
+  registrationReadMany,
+} from "./registrationRpc";
 import {
   IdentityRegistrationPolicy,
   IdentityRegistrationQuote,
@@ -63,6 +67,7 @@ import {
   parseTransaction,
   paymentOutput,
   readRegistrationPrevout,
+  readRegistrationPrevouts,
   requireAmounts,
   validateRegistrationTransaction,
 } from "./registrationTransaction";
@@ -237,7 +242,7 @@ function snapshotIdentityRegistrationRequest(
 
 /** Bind registration policy and expiry to the selected chain's active tip. */
 async function snapshotForRegistration(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   request: Pick<
     ResolveIdentityRegistrationRequest,
     "systemID" | "rootSystemName" | "expiryDelta"
@@ -253,13 +258,20 @@ async function snapshotForRegistration(
     );
   }
 
-  const [infoResponse, nativeResponse, selectedResponse] = await Promise.all([
-    rpc.getInfo(),
-    rpc.getCurrency(request.systemID),
-    rpc.chain === request.systemID
-      ? Promise.resolve(undefined)
-      : rpc.getCurrency(rpc.chain),
-  ]);
+  // These reads are independent. Tip block lookup still waits for getinfo's
+  // height, and the selected native currency is requested only once.
+  const [infoResponse, nativeResponse, selectedResponse] =
+    await registrationReadMany(
+      rpc,
+      rpc.chain === request.systemID
+        ? [["getInfo"], ["getCurrency", request.systemID]]
+        : [
+            ["getInfo"],
+            ["getCurrency", request.systemID],
+            ["getCurrency", rpc.chain],
+          ],
+      true
+    );
   const info = registrationRpcResult<any>(infoResponse, "getinfo");
   const native = registrationRpcResult<CurrencyDefinition>(
     nativeResponse,
@@ -352,10 +364,11 @@ async function snapshotForRegistration(
  * Funding may raise relay fees; transaction builders enforce the caller's caps.
  */
 export async function resolveIdentityRegistration(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   request: ResolveIdentityRegistrationRequest
 ): Promise<ResolvedIdentityRegistration> {
   request = { ...request };
+  rpc = createRegistrationRpc(rpc);
   const snapshot = await snapshotForRegistration(rpc, request);
 
   const policy = await resolveIdentityRegistrationPolicy(rpc, {
@@ -395,7 +408,7 @@ function constrainRegistrationExpiry(
 
 /** Check signing policies against raw outputs and the tip's unspent view. */
 async function authoritiesFor(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   addresses: string[],
   snapshot: RegistrationChainSnapshot
 ): Promise<RegistrationIdentityAuthority[]> {
@@ -430,10 +443,14 @@ async function authoritiesFor(
         );
       }
 
-      const [rawResponse, unspentResponse] = await Promise.all([
-        rpc.getRawTransaction(result.txid, 0),
-        rpc.getTxOut(result.txid, result.vout, true),
-      ]);
+      const [rawResponse, unspentResponse] = await registrationReadMany(
+        rpc,
+        [
+          ["getRawTransaction", result.txid, 0],
+          ["getTxOut", result.txid, result.vout, true],
+        ],
+        true
+      );
       const raw = registrationRpcResult<any>(
         rawResponse,
         "getrawtransaction authorization"
@@ -535,7 +552,7 @@ async function authoritiesFor(
 }
 
 async function validateRegistrationChangeAddress(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   changeAddress: string,
   snapshot: RegistrationChainSnapshot,
   createdIdentityID?: string
@@ -590,7 +607,7 @@ function registrationRelayFee(outputs: RegistrationPlannedOutput[]): BN {
 
 /** Update the quote for actual relay fees and enforce approved cost caps. */
 async function fundQuotedRegistration(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   resolved: ResolvedIdentityRegistration,
   stage: PreparedIdentityRegistrationTransaction["stage"],
   outputs: RegistrationPlannedOutput[],
@@ -668,7 +685,7 @@ async function fundQuotedRegistration(
 
 /** Attach verified authorities and freeze the unsigned plan for later signing. */
 async function preparedTransaction(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   funded: FundedRegistration,
   resolved: ResolvedIdentityRegistration,
   stage: PreparedIdentityRegistrationTransaction["stage"],
@@ -926,10 +943,11 @@ export function validatePreparedIdentityRegistrationTransaction(
  * Persist the record securely before broadcasting; the reveal needs its salt.
  */
 export async function createNameReservationTransaction(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   request: CreateNameReservationTransactionRequest
 ): Promise<NameReservationTransactionResult> {
   request = snapshotNameReservationRequest(request);
+  rpc = createRegistrationRpc(rpc);
   const controller = destination(request.controller);
 
   if (
@@ -995,11 +1013,18 @@ export async function createNameReservationTransaction(
 
   // Check the supplied prevouts against the current quote for both stages.
   const available: RegistrationAmounts = {};
-  for (const item of request.funding)
-    addAmounts(
-      available,
-      (await readRegistrationPrevout(rpc, item, snapshot)).values
-    );
+  const fundingPrevouts = await readRegistrationPrevouts(
+    rpc,
+    request.funding,
+    snapshot
+  );
+  fundingPrevouts.forEach((prevout, index) => {
+    addAmounts(available, prevout.values);
+
+    // The request is detached from the caller. Reuse immutable transaction
+    // bytes during fee calculation while continuing to refresh spendability.
+    request.funding[index].rawTransaction = prevout.rawTransaction;
+  });
 
   const requireOperationFunds = () => {
     if (
@@ -1149,10 +1174,11 @@ function burnOutput(
  * Recheck the active-chain commitment, namespace policy and approved reveal costs.
  */
 export async function createIdentityRegistrationTransaction(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   request: CreateIdentityRegistrationTransactionRequest
 ): Promise<PreparedIdentityRegistrationTransaction> {
   request = snapshotIdentityRegistrationRequest(request);
+  rpc = createRegistrationRpc(rpc);
   const record = request.reservation;
   const reservation = restoreReservation(record);
   const snapshot = await snapshotForRegistration(rpc, {

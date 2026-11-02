@@ -169,6 +169,17 @@ Standalone verification is available as `verifyIdentityUpdateData(request, hex, 
 
 Identity registration has two transactions. `createNameReservationTransaction` creates the **commitment transaction** and a private reservation record. After that commitment confirms, `createIdentityRegistrationTransaction` spends its exact outpoint to publish the reservation and create the identity. These methods do not broadcast or wait for confirmations.
 
+Each resolve/build operation reuses successful currency definition and nonverbose raw-transaction reads, including simultaneous duplicates. This scope is discarded between operations; chain-tip, identity, and spendability checks remain fresh.
+
+Applications can opt into explicit registration batches through the optional `interface.requestMany` hook:
+
+```typescript
+// Supply the application's batch transport, including unsupported-server fallback.
+verusIdClient.interface.requestMany = requests => registrationTransport.requestMany(requests);
+```
+
+The hook receives primitive `ApiRequest` objects and must return one RPC response envelope per request in the same order, preserving individual errors. It must fetch live chain/spendability reads without a TTL cache and handle server batch capability failures. The SDK submits groups of at most 20 requests and checks each response with the existing registration validations. Without the hook, it uses the ordinary RPC methods. Initial tip discovery still waits for `getinfo` before requesting that height's block; revalidation of a known tip batches those two reads.
+
 The client supports modern advanced reservations for the native chain and supported non-fractional token namespaces, including referrals and issuer/referrer authorization. A parent must be an eligible registered currency namespace; owning an ordinary VerusID does not make it an issuance namespace. Fractional/gateway pricing, legacy reservation creation, unsupported payment policies, and shielded funding are rejected before constructing a commitment.
 
 Use explicit network context. `rootSystemName` is the global root name, such as `VRSC` or `VRSCTEST`; `systemID` identifies the chain that will register the identity. A leaf with a non-root `parent` also needs `parentName`. Fully qualified names and explicit parent selections must agree.

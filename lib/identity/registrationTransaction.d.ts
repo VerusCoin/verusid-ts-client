@@ -1,6 +1,6 @@
 import BN from "bn.js";
 import { TxDestination } from "verus-typescript-primitives";
-import { VerusdRpcInterface } from "verusd-rpc-ts-client";
+import { RegistrationRpc } from "./registrationRpc";
 export type RegistrationAmounts = {
     [currencyID: string]: string;
 };
@@ -41,15 +41,21 @@ export declare function parseTransaction(hex: string): any;
 /** Ordinary transfers only; special registration outputs are handled explicitly. */
 export declare function readFundingOutput(script: Buffer, value: number, systemID: string): RegistrationAmounts;
 export declare function paymentOutput(recipient: string, values: RegistrationAmounts, systemID: string, role: RegistrationPlannedOutput["role"]): RegistrationPlannedOutput;
-export declare function readRegistrationPrevout(rpc: VerusdRpcInterface, input: RegistrationFundingInput, snapshot: RegistrationChainSnapshot, commitment?: boolean): Promise<RegistrationPrevout>;
-export declare function assertRegistrationSnapshot(rpc: VerusdRpcInterface, snapshot: RegistrationChainSnapshot): Promise<void>;
+/**
+ * Read an already-known group of inputs together. Supplied raw bytes avoid a
+ * network read; every output still gets a fresh spendability check. The batch
+ * helper bounds network groups, while verification keeps the caller's order.
+ */
+export declare function readRegistrationPrevouts(rpc: RegistrationRpc, inputs: RegistrationFundingInput[], snapshot: RegistrationChainSnapshot, commitment?: boolean): Promise<RegistrationPrevout[]>;
+export declare function readRegistrationPrevout(rpc: RegistrationRpc, input: RegistrationFundingInput, snapshot: RegistrationChainSnapshot, commitment?: boolean): Promise<RegistrationPrevout>;
+export declare function assertRegistrationSnapshot(rpc: RegistrationRpc, snapshot: RegistrationChainSnapshot): Promise<void>;
 export type FundedRegistration = {
     txHex: string;
     prevouts: RegistrationPrevout[];
     outputPlan: RegistrationPlannedOutput[];
 };
 /** Deterministic approved-input selection; the mandatory commitment is never coin-selected away. */
-export declare function fundRegistration(rpc: VerusdRpcInterface, snapshot: RegistrationChainSnapshot, outputs: RegistrationPlannedOutput[], nativeFee: string, funding: RegistrationFundingInput[], changeAddress: string, mandatory?: RegistrationPrevout): Promise<FundedRegistration>;
+export declare function fundRegistration(rpc: RegistrationRpc, snapshot: RegistrationChainSnapshot, outputs: RegistrationPlannedOutput[], nativeFee: string, funding: RegistrationFundingInput[], changeAddress: string, mandatory?: RegistrationPrevout): Promise<FundedRegistration>;
 /** Check all bytes other than signatures, plus raw prevout amounts and currency conservation. */
 export declare function validateRegistrationTransaction(prepared: FundedRegistration & {
     snapshot: RegistrationChainSnapshot;

@@ -20,7 +20,12 @@ import {
   I_ADDR_VERSION,
   R_ADDR_VERSION,
 } from "verus-typescript-primitives";
-import { VerusdRpcInterface } from "verusd-rpc-ts-client";
+import { RpcRequestResult } from "verusd-rpc-ts-client";
+import {
+  RegistrationRpc,
+  RegistrationRead,
+  registrationReadMany,
+} from "./registrationRpc";
 import { RegistrationError } from "./registrationPolicy";
 import { verifyRegistrationFunding } from "./registrationFundingVerification";
 import {
@@ -357,12 +362,7 @@ export function paymentOutput(
   };
 }
 
-export async function readRegistrationPrevout(
-  rpc: VerusdRpcInterface,
-  input: RegistrationFundingInput,
-  snapshot: RegistrationChainSnapshot,
-  commitment = false
-): Promise<RegistrationPrevout> {
+function assertRegistrationOutpoint(input: RegistrationFundingInput): void {
   if (
     !/^[0-9a-f]{64}$/.test(input.txid) ||
     !Number.isInteger(input.vout) ||
@@ -374,19 +374,16 @@ export async function readRegistrationPrevout(
       "Invalid registration outpoint."
     );
   }
-  let raw = input.rawTransaction;
-  if (raw == null) {
-    const response = await rpc.getRawTransaction(input.txid, 0);
-    if (response.error)
-      throw new RegistrationError(
-        "RPC_ERROR",
-        "Cannot read previous transaction: " + response.error.message
-      );
-    raw =
-      typeof response.result === "string"
-        ? response.result
-        : response.result?.hex;
-  }
+}
+
+/** Decode canonical source bytes before using their values for coin selection. */
+function readRegistrationOutput(
+  input: RegistrationFundingInput,
+  raw: string,
+  snapshot: RegistrationChainSnapshot,
+  commitment: boolean
+) {
+  assertRegistrationOutpoint(input);
   const tx = parseTransaction(raw!);
   if (tx.getId() !== input.txid)
     throw new RegistrationError(
@@ -412,7 +409,18 @@ export async function readRegistrationPrevout(
     values = { [snapshot.systemID]: String(output.value) };
   } else
     values = readFundingOutput(output.script, output.value, snapshot.systemID);
-  const response = await rpc.getTxOut(input.txid, input.vout, true);
+  return { tx, output, values };
+}
+
+function verifyRegistrationPrevout(
+  input: RegistrationFundingInput,
+  raw: string,
+  response: RpcRequestResult<any>,
+  snapshot: RegistrationChainSnapshot,
+  commitment: boolean,
+  decoded = readRegistrationOutput(input, raw, snapshot, commitment)
+): RegistrationPrevout {
+  const { tx, output, values } = decoded;
   if (response.error)
     throw new RegistrationError(
       "RPC_ERROR",
@@ -485,13 +493,94 @@ export async function readRegistrationPrevout(
   };
 }
 
+/**
+ * Read an already-known group of inputs together. Supplied raw bytes avoid a
+ * network read; every output still gets a fresh spendability check. The batch
+ * helper bounds network groups, while verification keeps the caller's order.
+ */
+export async function readRegistrationPrevouts(
+  rpc: RegistrationRpc,
+  inputs: RegistrationFundingInput[],
+  snapshot: RegistrationChainSnapshot,
+  commitment = false
+): Promise<RegistrationPrevout[]> {
+  const reads: RegistrationRead[] = [];
+  const rawIndexes = new Map<string, number>();
+  const entries = inputs.map((input) => {
+    assertRegistrationOutpoint(input);
+    let rawIndex: number | undefined;
+    let decoded: ReturnType<typeof readRegistrationOutput> | undefined;
+
+    if (input.rawTransaction == null) {
+      rawIndex = rawIndexes.get(input.txid);
+      if (rawIndex == null) {
+        rawIndex = reads.length;
+        rawIndexes.set(input.txid, rawIndex);
+        reads.push(["getRawTransaction", input.txid, 0]);
+      }
+    } else {
+      // Reject malformed supplied bytes before asking the server for anything.
+      decoded = readRegistrationOutput(
+        input,
+        input.rawTransaction,
+        snapshot,
+        commitment
+      );
+    }
+
+    const unspentIndex = reads.length;
+    reads.push(["getTxOut", input.txid, input.vout, true]);
+    return { input, rawIndex, unspentIndex, decoded };
+  });
+
+  const responses = await registrationReadMany(rpc, reads);
+  return entries.map(({ input, rawIndex, unspentIndex, decoded }) => {
+    let raw = input.rawTransaction;
+    if (rawIndex != null) {
+      const response = responses[rawIndex];
+      if (response.error)
+        throw new RegistrationError(
+          "RPC_ERROR",
+          "Cannot read previous transaction: " + response.error.message
+        );
+      raw =
+        typeof response.result === "string"
+          ? response.result
+          : response.result?.hex;
+    }
+
+    return verifyRegistrationPrevout(
+      input,
+      raw!,
+      responses[unspentIndex],
+      snapshot,
+      commitment,
+      decoded
+    );
+  });
+}
+
+export async function readRegistrationPrevout(
+  rpc: RegistrationRpc,
+  input: RegistrationFundingInput,
+  snapshot: RegistrationChainSnapshot,
+  commitment = false
+): Promise<RegistrationPrevout> {
+  return (
+    await readRegistrationPrevouts(rpc, [input], snapshot, commitment)
+  )[0];
+}
+
 export async function assertRegistrationSnapshot(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   snapshot: RegistrationChainSnapshot
 ): Promise<void> {
-  const info = await rpc.getInfo();
+  // The height is already known here, so neither read depends on the other.
+  const [info, block] = await registrationReadMany(rpc, [
+    ["getInfo"],
+    ["getBlock", String(snapshot.tipHeight), 1],
+  ]);
   if (info.error) throw new RegistrationError("RPC_ERROR", info.error.message);
-  const block = await rpc.getBlock(String(snapshot.tipHeight), 1);
   if (block.error)
     throw new RegistrationError("RPC_ERROR", block.error.message);
   const result = block.result as any;
@@ -516,7 +605,7 @@ export type FundedRegistration = {
 
 /** Deterministic approved-input selection; the mandatory commitment is never coin-selected away. */
 export async function fundRegistration(
-  rpc: VerusdRpcInterface,
+  rpc: RegistrationRpc,
   snapshot: RegistrationChainSnapshot,
   outputs: RegistrationPlannedOutput[],
   nativeFee: string,
@@ -560,11 +649,31 @@ export async function fundRegistration(
     Object.keys(needed).every((id) =>
       atomic(total[id] || "0").gte(atomic(needed[id]))
     );
-  for (const item of funding) {
-    if (sufficient()) break;
-    const verified = await readRegistrationPrevout(rpc, item, snapshot);
-    selected.push(verified);
-    addAmounts(total, verified.values);
+  if (funding.every((input) => input.rawTransaction != null)) {
+    // Known source bytes let us select locally, then check only the necessary
+    // outputs in one group. Never request unused inputs merely to fill a batch.
+    const chosen: RegistrationFundingInput[] = [];
+    for (const item of funding) {
+      if (sufficient()) break;
+      const { values } = readRegistrationOutput(
+        item,
+        item.rawTransaction!,
+        snapshot,
+        false
+      );
+      chosen.push(item);
+      addAmounts(total, values);
+    }
+    selected.push(...(await readRegistrationPrevouts(rpc, chosen, snapshot)));
+  } else {
+    // Unknown amounts still require ordered selection. Each missing source
+    // transaction can travel with its own fresh gettxout in the same batch.
+    for (const item of funding) {
+      if (sufficient()) break;
+      const verified = await readRegistrationPrevout(rpc, item, snapshot);
+      selected.push(verified);
+      addAmounts(total, verified.values);
+    }
   }
   if (!sufficient() || !selected.length)
     throw new RegistrationError(

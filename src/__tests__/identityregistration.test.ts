@@ -9,6 +9,7 @@ import {
 } from "@bitgo/utxo-lib";
 import {
   AdvancedNameReservation,
+  ApiRequest,
   CurrencyOptions,
   CurrencyValueMap,
   EVALS,
@@ -304,6 +305,67 @@ async function commitAndConfirm(h: ReturnType<typeof harness>) {
 }
 
 describe("public identity registration builders", () => {
+  test("reuses the native namespace definition within each quote and refreshes the next quote", async () => {
+    const h = harness();
+    const first = await h.client.resolveIdentityRegistration(h.request);
+    expect(h.calls.filter((method) => method === "getcurrency")).toHaveLength(
+      1
+    );
+
+    h.native.idregistrationfees = 2;
+    const second = await h.client.resolveIdentityRegistration(h.request);
+    expect(h.calls.filter((method) => method === "getcurrency")).toHaveLength(
+      2
+    );
+    expect(first.quote.registrationOffer).toBe("100000000");
+    expect(second.quote.registrationOffer).toBe("200000000");
+  });
+
+  test("prepares the same commitment through batch transport and rechecks spent funding on the next build", async () => {
+    const single = harness();
+    const batched = harness();
+    const requestMany = jest.fn(async (requests: ApiRequest[]) =>
+      Promise.all(
+        requests.map((request) => batched.client.interface.request(request))
+      )
+    );
+    batched.client.interface.requestMany = requestMany;
+
+    const expected = await single.client.createNameReservationTransaction(
+      single.request
+    );
+    const actual = await batched.client.createNameReservationTransaction(
+      batched.request
+    );
+    expect(actual.transaction.txHex).toBe(expected.transaction.txHex);
+    expect(actual.transaction.prevouts).toEqual(expected.transaction.prevouts);
+    expect(actual.transaction.quote).toEqual(expected.transaction.quote);
+    expect(actual.reservation).toEqual(expected.reservation);
+    expect(
+      batched.calls.filter((method) => method === "getcurrency")
+    ).toHaveLength(1);
+    expect(
+      batched.calls.filter((method) => method === "getrawtransaction")
+    ).toHaveLength(1);
+    expect(
+      requestMany.mock.calls.map(([requests]) =>
+        requests.map((request) => request.cmd)
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        ["getinfo", "getcurrency"],
+        ["getinfo", "getblock"],
+        ["getrawtransaction", "gettxout"],
+      ])
+    );
+
+    const input = batched.request.funding[0];
+    batched.spent.add(`${input.txid}:${input.vout}`);
+    await expect(
+      batched.client.createNameReservationTransaction(batched.request)
+    ).rejects.toMatchObject({ code: "FUNDING_SPENT" });
+  });
+
   test.each([
     "missing change",
     "excessive fee",

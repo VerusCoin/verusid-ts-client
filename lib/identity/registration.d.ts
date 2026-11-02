@@ -1,5 +1,5 @@
 import { Identity, IdentityRegistrationNameRequest, VerusCLIVerusIDJson } from "verus-typescript-primitives";
-import { VerusdRpcInterface } from "verusd-rpc-ts-client";
+import { RegistrationRpc } from "./registrationRpc";
 import { IdentityRegistrationPolicy, IdentityRegistrationQuote } from "./registrationPolicy";
 import { RegistrationIdentityAuthority, RegistrationInputSignatureStatus } from "./registrationSigning";
 import { FundedRegistration, RegistrationAmounts, RegistrationChainSnapshot, RegistrationFundingInput } from "./registrationTransaction";
@@ -95,7 +95,7 @@ export interface CreateIdentityRegistrationTransactionRequest {
  * Resolve the namespace policy and initial quote at a consistent chain tip.
  * Funding may raise relay fees; transaction builders enforce the caller's caps.
  */
-export declare function resolveIdentityRegistration(rpc: VerusdRpcInterface, request: ResolveIdentityRegistrationRequest): Promise<ResolvedIdentityRegistration>;
+export declare function resolveIdentityRegistration(rpc: RegistrationRpc, request: ResolveIdentityRegistrationRequest): Promise<ResolvedIdentityRegistration>;
 /**
  * Check a candidate against the retained quote, outputs and spending approval.
  * Run before signing or merging partials. This does not refresh chain state.
@@ -105,9 +105,9 @@ export declare function validatePreparedIdentityRegistrationTransaction(prepared
  * Build an unsigned commitment and its private reservation recovery record.
  * Persist the record securely before broadcasting; the reveal needs its salt.
  */
-export declare function createNameReservationTransaction(rpc: VerusdRpcInterface, request: CreateNameReservationTransactionRequest): Promise<NameReservationTransactionResult>;
+export declare function createNameReservationTransaction(rpc: RegistrationRpc, request: CreateNameReservationTransactionRequest): Promise<NameReservationTransactionResult>;
 /**
  * Build an unsigned reveal spending the saved reservation's confirmed commitment.
  * Recheck the active-chain commitment, namespace policy and approved reveal costs.
  */
-export declare function createIdentityRegistrationTransaction(rpc: VerusdRpcInterface, request: CreateIdentityRegistrationTransactionRequest): Promise<PreparedIdentityRegistrationTransaction>;
+export declare function createIdentityRegistrationTransaction(rpc: RegistrationRpc, request: CreateIdentityRegistrationTransactionRequest): Promise<PreparedIdentityRegistrationTransaction>;

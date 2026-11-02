@@ -64,6 +64,7 @@ import {
   SmartTransactionScript
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
+import { RegistrationRpc } from "./identity/registrationRpc";
 import {
   IdentitySignature,
   ECPair,
@@ -203,7 +204,7 @@ type FundedCurrencyValidation = {
 }
 
 class VerusIdInterface {
-  interface: VerusdRpcInterface;
+  interface: RegistrationRpc;
 
   constructor(
     chain: string, 
