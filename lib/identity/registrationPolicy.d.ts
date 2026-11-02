@@ -1,3 +1,4 @@
+import { RegistrationRequestMany } from "./registrationRpc";
 import { CurrencyDefinition, IdentityDefinition, IdentityRegistrationNameRequest, ResolvedIdentityRegistrationName } from "verus-typescript-primitives";
 export declare class RegistrationError extends Error {
     readonly code: string;
@@ -6,6 +7,9 @@ export declare class RegistrationError extends Error {
 }
 /** The public RPC client satisfies this adapter; wallet signing RPCs are not used. */
 export interface RegistrationPolicyRpc {
+    /** Optional host batch transport; single-method adapters remain supported. */
+    chain?: string;
+    requestMany?: RegistrationRequestMany;
     getCurrency(id: string): Promise<unknown>;
     getIdentity(id: string, height?: number): Promise<unknown>;
     getIdentityHistory(id: string, start?: number, end?: number): Promise<unknown>;

@@ -1,6 +1,11 @@
 import BN from "bn.js";
 import { Transaction, networks } from "@bitgo/utxo-lib";
 import {
+  RegistrationRpc,
+  RegistrationRequestMany,
+  registrationReadMany,
+} from "./registrationRpc";
+import {
   CurrencyDefinition,
   CurrencyIdentityRegistration,
   IdentityDefinition,
@@ -31,6 +36,9 @@ export class RegistrationError extends Error {
 
 /** The public RPC client satisfies this adapter; wallet signing RPCs are not used. */
 export interface RegistrationPolicyRpc {
+  /** Optional host batch transport; single-method adapters remain supported. */
+  chain?: string;
+  requestMany?: RegistrationRequestMany;
   getCurrency(id: string): Promise<unknown>;
   getIdentity(id: string, height?: number): Promise<unknown>;
   getIdentityHistory(
@@ -336,10 +344,23 @@ async function referralHistory(
   hash(first.blockhash, "Referral block hash");
   if (!Number.isSafeInteger(output.voutnum) || output.voutnum < 0)
     fail("INVALID_RPC_RESPONSE", "Invalid referral identity output index");
-  const responses = await Promise.all([
-    rpc.getRawTransaction(output.txid, 0),
-    rpc.getBlock(first.blockhash, 1),
-  ]);
+
+  // These reads are independent. Full clients share their preparation's raw
+  // bytes and batch the misses; minimal policy adapters retain their old API.
+  const responses =
+    rpc.requestMany && typeof rpc.chain === "string"
+      ? await registrationReadMany(
+          rpc as RegistrationRpc,
+          [
+            ["getRawTransaction", output.txid, 0],
+            ["getBlock", first.blockhash, 1],
+          ],
+          true
+        )
+      : await Promise.all([
+          rpc.getRawTransaction(output.txid, 0),
+          rpc.getBlock(first.blockhash, 1),
+        ]);
   const raw = registrationRpcResult<unknown>(responses[0], "getrawtransaction");
   if (typeof raw !== "string" || !/^(?:[0-9a-f]{2})+$/i.test(raw))
     fail(

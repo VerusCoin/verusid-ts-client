@@ -603,6 +603,85 @@ export type FundedRegistration = {
   outputPlan: RegistrationPlannedOutput[];
 };
 
+/**
+ * Verify the ordered funding prefix needed for every required currency.
+ * Known amounts select a group locally; an unknown amount ends that group so
+ * its raw transaction and spendability can be read together before proceeding.
+ * Existing verified inputs let a caller extend coverage after a fee increase.
+ */
+export async function selectRegistrationFunding(
+  rpc: RegistrationRpc,
+  snapshot: RegistrationChainSnapshot,
+  funding: RegistrationFundingInput[],
+  needed: RegistrationAmounts,
+  existing: RegistrationPrevout[] = []
+): Promise<RegistrationPrevout[]> {
+  const selected = existing.slice();
+  const total: RegistrationAmounts = {};
+  selected.forEach((input) => addAmounts(total, input.values));
+  const knownTransactions = new Map(
+    existing.map((input) => [input.txid, input.rawTransaction])
+  );
+
+  // Reject duplicates across the entire approval, including unused candidates.
+  const seen = new Set<string>();
+  for (const input of [...existing, ...funding]) {
+    const key = input.txid + ":" + input.vout;
+    if (seen.has(key))
+      throw new RegistrationError(
+        "DUPLICATE_INPUT",
+        "Duplicate funding or commitment outpoint."
+      );
+    seen.add(key);
+  }
+
+  const sufficient = (amounts: RegistrationAmounts) =>
+    Object.keys(needed).every((id) =>
+      atomic(amounts[id] || "0").gte(atomic(needed[id]))
+    );
+
+  let index = 0;
+  while (index < funding.length && !sufficient(total)) {
+    const chosen: RegistrationFundingInput[] = [];
+    const anticipated = { ...total };
+    while (index < funding.length && !sufficient(anticipated)) {
+      const candidate = funding[index++];
+      const input = {
+        ...candidate,
+        rawTransaction:
+          candidate.rawTransaction ?? knownTransactions.get(candidate.txid),
+      };
+      chosen.push(input);
+      if (input.rawTransaction == null) break;
+
+      const { values } = readRegistrationOutput(
+        input,
+        input.rawTransaction,
+        snapshot,
+        false
+      );
+      addAmounts(anticipated, values);
+    }
+
+    // Never fetch an unused tail merely to fill a batch. The read helper bounds
+    // large known groups and verifies every selected amount against raw bytes.
+    const verified = await readRegistrationPrevouts(rpc, chosen, snapshot);
+    selected.push(...verified);
+    verified.forEach((input) => {
+      addAmounts(total, input.values);
+      knownTransactions.set(input.txid, input.rawTransaction);
+    });
+  }
+
+  if (!sufficient(total))
+    throw new RegistrationError(
+      "INSUFFICIENT_FUNDS",
+      "Approved funding does not cover registration costs in every currency."
+    );
+
+  return selected;
+}
+
 /** Deterministic approved-input selection; the mandatory commitment is never coin-selected away. */
 export async function fundRegistration(
   rpc: RegistrationRpc,
@@ -628,58 +707,20 @@ export async function fundRegistration(
     [snapshot.systemID]: atomic(nativeFee).toString(10),
   };
   outputs.forEach((output) => addAmounts(needed, output.values));
-  const total: RegistrationAmounts = {};
-  const selected: RegistrationPrevout[] = [];
-  const seen = new Set<string>();
-  if (mandatory) {
-    selected.push(mandatory);
-    addAmounts(total, mandatory.values);
-    seen.add(mandatory.txid + ":" + mandatory.vout);
-  }
-  for (const item of funding) {
-    const key = item.txid + ":" + item.vout;
-    if (seen.has(key))
-      throw new RegistrationError(
-        "DUPLICATE_INPUT",
-        "Duplicate funding or commitment outpoint."
-      );
-    seen.add(key);
-  }
-  const sufficient = () =>
-    Object.keys(needed).every((id) =>
-      atomic(total[id] || "0").gte(atomic(needed[id]))
-    );
-  if (funding.every((input) => input.rawTransaction != null)) {
-    // Known source bytes let us select locally, then check only the necessary
-    // outputs in one group. Never request unused inputs merely to fill a batch.
-    const chosen: RegistrationFundingInput[] = [];
-    for (const item of funding) {
-      if (sufficient()) break;
-      const { values } = readRegistrationOutput(
-        item,
-        item.rawTransaction!,
-        snapshot,
-        false
-      );
-      chosen.push(item);
-      addAmounts(total, values);
-    }
-    selected.push(...(await readRegistrationPrevouts(rpc, chosen, snapshot)));
-  } else {
-    // Unknown amounts still require ordered selection. Each missing source
-    // transaction can travel with its own fresh gettxout in the same batch.
-    for (const item of funding) {
-      if (sufficient()) break;
-      const verified = await readRegistrationPrevout(rpc, item, snapshot);
-      selected.push(verified);
-      addAmounts(total, verified.values);
-    }
-  }
-  if (!sufficient() || !selected.length)
+  const selected = await selectRegistrationFunding(
+    rpc,
+    snapshot,
+    funding,
+    needed,
+    mandatory ? [mandatory] : []
+  );
+  if (!selected.length)
     throw new RegistrationError(
       "INSUFFICIENT_FUNDS",
       "Approved funding does not cover registration costs in every currency."
     );
+  const total: RegistrationAmounts = {};
+  selected.forEach((input) => addAmounts(total, input.values));
   const change: RegistrationAmounts = {};
   Object.keys(total).forEach((id) => {
     const amount = atomic(total[id]).sub(atomic(needed[id] || "0"));

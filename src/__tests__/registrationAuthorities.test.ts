@@ -10,6 +10,7 @@ import {
 } from "verus-typescript-primitives";
 import { VerusdRpcInterface } from "verusd-rpc-ts-client";
 import { createNameReservationTransaction } from "../identity/registration";
+import { paymentOutput } from "../identity/registrationTransaction";
 
 const systemID = nameAndParentAddrToIAddr("VRSC");
 const controllerID = nameAndParentAddrToIAddr("Controller", systemID);
@@ -27,7 +28,7 @@ function source(script: Buffer, value: number) {
   return tx.buildIncomplete();
 }
 
-function authorityFixture(flags = 0, unlockAfter = 0) {
+function authorityFixture(flags = 0, unlockAfter = 0, identityFunding = false) {
   const identity = new Identity({
     version: new BN(3),
     flags: new BN(flags),
@@ -43,7 +44,12 @@ function authorityFixture(flags = 0, unlockAfter = 0) {
   const authority = source(IdentityScript.fromIdentity(identity).toBuffer(), 0);
   const { address } = require("@bitgo/utxo-lib");
   const funding = source(
-    address.toOutputScript(key.toAddress(), networks.verus),
+    identityFunding
+      ? Buffer.from(
+          paymentOutput(controllerID, {}, systemID, "change").scriptHex,
+          "hex"
+        )
+      : address.toOutputScript(key.toAddress(), networks.verus),
     20000000000
   );
   const declared: any = {
@@ -124,10 +130,54 @@ function authorityFixture(flags = 0, unlockAfter = 0) {
       rpc as unknown as VerusdRpcInterface,
       request
     );
-  return { build, declared, unspent, rpc, authority };
+  return { build, declared, unspent, rpc, authority, request };
 }
 
 describe("registration authority evidence before commitment", () => {
+  test("shares verified authority evidence for change, controller and funding only within one preparation", async () => {
+    const fixture = authorityFixture(0, 0, true);
+    fixture.request.changeAddress = controllerID;
+    const { transaction } = await fixture.build();
+
+    const authorityLookups = () =>
+      fixture.rpc.getIdentity.mock.calls.filter(([id]) => id === controllerID);
+    const authorityUnspents = () =>
+      fixture.rpc.getTxOut.mock.calls.filter(
+        ([txid]) => txid === fixture.authority.getId()
+      );
+    expect(authorityLookups()).toHaveLength(1);
+    expect(authorityUnspents()).toHaveLength(1);
+    expect(fixture.rpc.getRawTransaction).toHaveBeenCalledTimes(1);
+    expect(transaction.identityAuthorities).toEqual(
+      transaction.revealAuthorities
+    );
+
+    // Frozen plans expose independent copies, including their nested key arrays.
+    expect(transaction.identityAuthorities[0]).not.toBe(
+      transaction.revealAuthorities[0]
+    );
+    expect(transaction.identityAuthorities[0].primaryAddresses).not.toBe(
+      transaction.revealAuthorities[0].primaryAddresses
+    );
+    expect(() => {
+      transaction.identityAuthorities[0].primaryAddresses[0] = "changed";
+    }).toThrow();
+    expect(transaction.revealAuthorities[0].primaryAddresses).toEqual([
+      key.toAddress(),
+    ]);
+
+    await fixture.build();
+    expect(authorityLookups()).toHaveLength(2);
+    expect(authorityUnspents()).toHaveLength(2);
+    expect(fixture.rpc.getRawTransaction).toHaveBeenCalledTimes(2);
+
+    // A subsequent preparation must still detect a newly spent authority.
+    fixture.rpc.getTxOut.mockImplementation(async () => ok(null));
+    await expect(fixture.build()).rejects.toMatchObject({
+      code: "AUTHORITY_CHANGED",
+    });
+  });
+
   test.each([0, 99, 100])(
     "accepts an unlocked identity with elapsed timelock %s",
     async (unlockAfter) => {

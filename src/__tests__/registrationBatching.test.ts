@@ -344,34 +344,124 @@ describe("registration batch reads", () => {
     ).toBe(true);
   });
 
-  test("batches only the approved funding inputs needed to cover costs", async () => {
+  test.each([false, true])(
+    "batches selected inputs even when unused raw bytes are missing: %s",
+    async (unknownTail) => {
+      const h = fixture();
+      const sources = [funding(1), funding(2), funding(3)];
+      if (unknownTail) delete sources[2].input.rawTransaction;
+      h.calls.getTxOut.mockImplementation(async (txid) =>
+        ok(sources.find((source) => source.input.txid === txid)?.unspent)
+      );
+      const result = await fundRegistration(
+        h.batched,
+        snapshot,
+        [paymentOutput(OWNER, { [SYSTEM]: "75000" }, SYSTEM, "issuer-payment")],
+        "1000",
+        sources.map((source) => source.input),
+        OWNER
+      );
+
+      expect(result.prevouts.map((prevout) => prevout.txid)).toEqual(
+        sources.slice(0, 2).map((source) => source.input.txid)
+      );
+      expect(h.requestMany).toHaveBeenCalledTimes(1);
+      expect(
+        h.requestMany.mock.calls[0][0].map((read) => read.prepare())
+      ).toEqual(
+        sources
+          .slice(0, 2)
+          .map((source) => [SYSTEM, "gettxout", [source.input.txid, 0, true]])
+      );
+      expect(h.calls.getRawTransaction).not.toHaveBeenCalled();
+      expect(result.outputPlan[1].values).toEqual({ [SYSTEM]: "24000" });
+    }
+  );
+
+  test("checks only necessary unknown amounts while batching adjacent known inputs", async () => {
     const h = fixture();
-    const sources = [funding(1), funding(2), funding(3)];
+    const sources = [
+      funding(1),
+      funding(2),
+      funding(3),
+      funding(4),
+      funding(5),
+    ];
+    h.calls.getRawTransaction.mockImplementation(async (txid) =>
+      ok(
+        sources.find((source) => source.input.txid === txid)?.input
+          .rawTransaction
+      )
+    );
     h.calls.getTxOut.mockImplementation(async (txid) =>
       ok(sources.find((source) => source.input.txid === txid)?.unspent)
     );
+    const inputs = sources.map((source) => ({ ...source.input }));
+    delete inputs[1].rawTransaction;
+    delete inputs[4].rawTransaction;
     const result = await fundRegistration(
       h.batched,
       snapshot,
-      [paymentOutput(OWNER, { [SYSTEM]: "75000" }, SYSTEM, "issuer-payment")],
+      [paymentOutput(OWNER, { [SYSTEM]: "175000" }, SYSTEM, "issuer-payment")],
       "1000",
-      sources.map((source) => source.input),
+      inputs,
       OWNER
     );
 
-    expect(result.prevouts.map((prevout) => prevout.txid)).toEqual(
-      sources.slice(0, 2).map((source) => source.input.txid)
+    expect(result.prevouts.map((input) => input.txid)).toEqual(
+      inputs.slice(0, 4).map((input) => input.txid)
     );
-    expect(h.requestMany).toHaveBeenCalledTimes(1);
     expect(
-      h.requestMany.mock.calls[0][0].map((read) => read.prepare())
-    ).toEqual(
-      sources
-        .slice(0, 2)
-        .map((source) => [SYSTEM, "gettxout", [source.input.txid, 0, true]])
+      h.requestMany.mock.calls.map(([reads]) =>
+        reads.map((read) => read.prepare())
+      )
+    ).toEqual([
+      [
+        [SYSTEM, "gettxout", [inputs[0].txid, 0, true]],
+        [SYSTEM, "getrawtransaction", [inputs[1].txid, 0]],
+        [SYSTEM, "gettxout", [inputs[1].txid, 0, true]],
+      ],
+      [
+        [SYSTEM, "gettxout", [inputs[2].txid, 0, true]],
+        [SYSTEM, "gettxout", [inputs[3].txid, 0, true]],
+      ],
+    ]);
+    expect(h.calls.getRawTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test("uses newly verified transaction bytes to select and batch its remaining outputs", async () => {
+    const h = fixture();
+    const source = funding(8, 4);
+    h.calls.getRawTransaction.mockResolvedValue(
+      ok(source.input.rawTransaction)
     );
-    expect(h.calls.getRawTransaction).not.toHaveBeenCalled();
-    expect(result.outputPlan[1].values).toEqual({ [SYSTEM]: "24000" });
+    h.calls.getTxOut.mockResolvedValue(ok(source.unspent));
+    const { txid } = source.input;
+    const result = await fundRegistration(
+      h.batched,
+      snapshot,
+      [paymentOutput(OWNER, { [SYSTEM]: "125000" }, SYSTEM, "issuer-payment")],
+      "1000",
+      Array.from({ length: 4 }, (_, vout) => ({ txid, vout })),
+      OWNER
+    );
+
+    expect(result.prevouts.map((input) => input.vout)).toEqual([0, 1, 2]);
+    expect(
+      h.requestMany.mock.calls.map(([reads]) =>
+        reads.map((read) => read.prepare())
+      )
+    ).toEqual([
+      [
+        [SYSTEM, "getrawtransaction", [txid, 0]],
+        [SYSTEM, "gettxout", [txid, 0, true]],
+      ],
+      [
+        [SYSTEM, "gettxout", [txid, 1, true]],
+        [SYSTEM, "gettxout", [txid, 2, true]],
+      ],
+    ]);
+    expect(h.calls.getRawTransaction).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,7 +1,10 @@
 import BN from "bn.js";
 import { Transaction, networks } from "@bitgo/utxo-lib";
+import { VerusdRpcInterface } from "verusd-rpc-ts-client";
+import { createRegistrationRpc } from "../identity/registrationRpc";
 import {
   AdvancedNameReservation,
+  ApiRequest,
   CurrencyOptions,
   Identity,
   IdentityID,
@@ -170,6 +173,25 @@ function referralFixture(ancestors: string[] = []) {
   return { rpc, tx };
 }
 
+function batchedPolicyRpc(rpc: ReturnType<typeof mockRpc>) {
+  const requestMany = jest.fn(async (reads: ApiRequest[]) =>
+    Promise.all(
+      reads.map((read) => {
+        const methods = Object.keys(rpc);
+        const method = methods.find((name) => name.toLowerCase() === read.cmd)!;
+        return (rpc as any)[method](...read.getParams());
+      })
+    )
+  );
+  const scoped = createRegistrationRpc(
+    Object.assign({}, rpc, {
+      chain: systemID,
+      requestMany,
+    }) as unknown as VerusdRpcInterface
+  );
+  return { scoped, requestMany };
+}
+
 describe("identity registration namespace policy and quotes", () => {
   test("resolves the exact leaf and prices native registration using atomic integers", async () => {
     const policy = await resolveIdentityRegistrationPolicy(mockRpc(), request);
@@ -291,6 +313,43 @@ describe("identity registration namespace policy and quotes", () => {
     });
   });
 
+  test("batches referral evidence while refreshing its active-chain block and history", async () => {
+    const { rpc } = referralFixture();
+    const { scoped, requestMany } = batchedPolicyRpc(rpc);
+
+    await resolveIdentityRegistrationPolicy(scoped, {
+      ...request,
+      referralID,
+      commitmentHeight: 80,
+    });
+    expect(
+      requestMany.mock.calls.some(
+        ([reads]) =>
+          reads.map((read) => read.cmd).join(",") ===
+          "getrawtransaction,getblock"
+      )
+    ).toBe(true);
+
+    await resolveIdentityRegistrationPolicy(scoped, {
+      ...request,
+      referralID,
+      commitmentHeight: 80,
+    });
+    expect(
+      requestMany.mock.calls[requestMany.mock.calls.length - 1][0].map(
+        (read) => read.cmd
+      )
+    ).toEqual(["getblock"]);
+    expect(rpc.getRawTransaction).toHaveBeenCalledTimes(1);
+    expect(rpc.getBlock).toHaveBeenCalledTimes(2);
+    expect(rpc.getIdentityHistory).toHaveBeenCalledTimes(2);
+    expect(
+      rpc.getIdentity.mock.calls.filter(
+        ([id, height]) => id === referralID && height === 79
+      )
+    ).toHaveLength(2);
+  });
+
   test("preserves each integer division when calculating non-divisible referral prices", async () => {
     const { rpc } = referralFixture();
     rpc.getCurrency.mockResolvedValue(
@@ -394,29 +453,38 @@ describe("identity registration namespace policy and quotes", () => {
     ).rejects.toMatchObject({ code: "IDENTITY_EXISTS" });
   });
 
-  test("rejects source transaction substitution and stale-chain referral history", async () => {
-    const { rpc, tx } = referralFixture();
-    tx.locktime = 1;
-    rpc.getRawTransaction.mockResolvedValue(ok(tx.toHex()));
-    await expect(
-      resolveIdentityRegistrationPolicy(rpc, {
-        ...request,
-        referralID,
-        commitmentHeight: 80,
-      })
-    ).rejects.toMatchObject({ code: "LOOKUP_MISMATCH" });
-    const other = referralFixture().rpc;
-    other.getBlock.mockResolvedValue(
-      ok({ hash: "ab".repeat(32), height: 50, confirmations: -1, tx: [] })
-    );
-    await expect(
-      resolveIdentityRegistrationPolicy(other, {
-        ...request,
-        referralID,
-        commitmentHeight: 80,
-      })
-    ).rejects.toMatchObject({ code: "REFERRAL_NOT_CONFIRMED" });
-  });
+  test.each([false, true])(
+    "rejects substituted or stale referral evidence with batching=%s",
+    async (batch) => {
+      const { rpc, tx } = referralFixture();
+      tx.locktime = 1;
+      rpc.getRawTransaction.mockResolvedValue(ok(tx.toHex()));
+      await expect(
+        resolveIdentityRegistrationPolicy(
+          batch ? batchedPolicyRpc(rpc).scoped : rpc,
+          {
+            ...request,
+            referralID,
+            commitmentHeight: 80,
+          }
+        )
+      ).rejects.toMatchObject({ code: "LOOKUP_MISMATCH" });
+      const other = referralFixture().rpc;
+      other.getBlock.mockResolvedValue(
+        ok({ hash: "ab".repeat(32), height: 50, confirmations: -1, tx: [] })
+      );
+      await expect(
+        resolveIdentityRegistrationPolicy(
+          batch ? batchedPolicyRpc(other).scoped : other,
+          {
+            ...request,
+            referralID,
+            commitmentHeight: 80,
+          }
+        )
+      ).rejects.toMatchObject({ code: "REFERRAL_NOT_CONFIRMED" });
+    }
+  );
 
   test("a referrer first registered in the commitment block is too new", async () => {
     const { rpc } = referralFixture();

@@ -366,6 +366,46 @@ describe("public identity registration builders", () => {
     ).rejects.toMatchObject({ code: "FUNDING_SPENT" });
   });
 
+  test.each([undefined, 2])(
+    "proves both stages with a sufficient prefix and leaves the unused tail unread (token proof %s)",
+    async (proof) => {
+      const h = harness(proof);
+      // A wallet may provide many candidates. Some unused ones may no longer be
+      // spendable or even contain invalid supplied bytes; neither should matter.
+      const tail = Array.from({ length: 66 }, (_, index) => ({
+        txid: (index + 1000).toString(16).padStart(64, "0"),
+        vout: 0,
+        ...(index % 2 ? { rawTransaction: "00" } : {}),
+      }));
+      h.request.funding.push(...tail);
+      const { transaction } = await h.client.createNameReservationTransaction(
+        h.request
+      );
+
+      expect(transaction.prevouts).toHaveLength(1);
+      expect(transaction.prevouts[0].txid).toBe(h.request.funding[0].txid);
+      expect(
+        h.calls.filter((method) => method === "getrawtransaction")
+      ).toHaveLength(1);
+      // Preflight verifies both-stage coverage; selection still refreshes the
+      // spendability of the output actually used by this commitment.
+      expect(h.calls.filter((method) => method === "gettxout")).toHaveLength(2);
+    }
+  );
+
+  test("rejects duplicate funding even after a sufficient prefix", async () => {
+    const h = harness();
+    h.request.funding.push(
+      { txid: "ff".repeat(32), vout: 0 },
+      { ...h.request.funding[0] }
+    );
+    await expect(
+      h.client.createNameReservationTransaction(h.request)
+    ).rejects.toMatchObject({ code: "DUPLICATE_INPUT" });
+    expect(h.calls).not.toContain("getrawtransaction");
+    expect(h.calls).not.toContain("gettxout");
+  });
+
   test.each([
     "missing change",
     "excessive fee",
@@ -746,7 +786,16 @@ describe("public identity registration builders", () => {
     h.native.idregistrationfees = 3;
     await expect(
       h.client.createIdentityRegistrationTransaction(reveal)
-    ).rejects.toMatchObject({ code: "COST_LIMIT_EXCEEDED" });
+    ).rejects.toMatchObject({
+      code: "COST_LIMIT_EXCEEDED",
+      details: {
+        requiredCosts: { [SYSTEM]: "300000000" },
+        quote: {
+          totalRequired: { [SYSTEM]: "300000000" },
+          totalOperationRequired: { [SYSTEM]: "300010000" },
+        },
+      },
+    });
     h.native.idregistrationfees = 1;
     h.native.options |= CurrencyOptions.ID_ISSUANCE;
     await expect(
@@ -766,7 +815,17 @@ describe("public identity registration builders", () => {
         ...h.request,
         approvedCosts: { [SYSTEM]: "10000" },
       })
-    ).rejects.toMatchObject({ code: "COST_LIMIT_EXCEEDED" });
+    ).rejects.toMatchObject({
+      code: "COST_LIMIT_EXCEEDED",
+      details: {
+        requiredCosts: { [SYSTEM]: "100010000" },
+        quote: {
+          totalRequired: { [SYSTEM]: "100000000" },
+          totalOperationRequired: { [SYSTEM]: "100010000" },
+        },
+      },
+    });
+    expect(h.calls).not.toContain("gettxout");
   });
 
   test("keeps centralized token-payment expiry before its end-block policy change", async () => {
@@ -951,6 +1010,35 @@ describe("registration relay fees", () => {
   test("rechecks funding for both stages after increasing the commitment fee", async () => {
     const h = harness();
     reserveFunding(h, [{ currencies: 75, native: 100010000 }]);
+    await expect(
+      h.client.createNameReservationTransaction(h.request)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_FUNDS" });
+  });
+
+  test("extends both-stage coverage only as far as needed after a fee increase", async () => {
+    const h = harness();
+    reserveFunding(h, [
+      { currencies: 75, native: 100010000 },
+      { currencies: 0, native: 10000 },
+      { currencies: 0, native: 200000000 },
+    ]);
+    const unused = h.request.funding[2];
+    h.spent.add(`${unused.txid}:${unused.vout}`);
+    const { transaction } = await h.client.createNameReservationTransaction(
+      h.request
+    );
+
+    expect(transaction.nativeFee).toBe("20000");
+    expect(transaction.quote.totalOperationRequired[SYSTEM]).toBe("100020000");
+    expect(transaction.prevouts).toHaveLength(1);
+    expect(
+      h.calls.filter((method) => method === "getrawtransaction")
+    ).toHaveLength(2);
+  });
+
+  test("requires both-stage coverage even when the commitment alone is affordable", async () => {
+    const h = harness();
+    reserveFunding(h, [{ currencies: 0, native: 50000000 }]);
     await expect(
       h.client.createNameReservationTransaction(h.request)
     ).rejects.toMatchObject({ code: "INSUFFICIENT_FUNDS" });

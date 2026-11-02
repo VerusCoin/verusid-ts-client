@@ -67,7 +67,7 @@ import {
   parseTransaction,
   paymentOutput,
   readRegistrationPrevout,
-  readRegistrationPrevouts,
+  selectRegistrationFunding,
   requireAmounts,
   validateRegistrationTransaction,
 } from "./registrationTransaction";
@@ -406,6 +406,39 @@ function constrainRegistrationExpiry(
   }
 }
 
+// A snapshot belongs to one preparation. Keep fully verified proofs local to it;
+// a later preparation must check the identity and its spendability again.
+const verifiedAuthorities = new WeakMap<
+  RegistrationChainSnapshot,
+  Map<string, Promise<RegistrationIdentityAuthority>>
+>();
+
+async function reuseVerifiedAuthority(
+  snapshot: RegistrationChainSnapshot,
+  identityID: string,
+  verify: () => Promise<RegistrationIdentityAuthority>
+): Promise<RegistrationIdentityAuthority> {
+  let proofs = verifiedAuthorities.get(snapshot);
+  if (!proofs) {
+    proofs = new Map();
+    verifiedAuthorities.set(snapshot, proofs);
+  }
+
+  let proof = proofs.get(identityID);
+  if (!proof) {
+    proof = verify().catch((error) => {
+      proofs!.delete(identityID);
+      throw error;
+    });
+    proofs.set(identityID, proof);
+  }
+
+  // Each use gets its own proof and key list, so freezing a returned plan
+  // cannot affect the proof used by another preparation step.
+  const authority = await proof;
+  return { ...authority, primaryAddresses: [...authority.primaryAddresses] };
+}
+
 /** Check signing policies against raw outputs and the tip's unspent view. */
 async function authoritiesFor(
   rpc: RegistrationRpc,
@@ -416,138 +449,145 @@ async function authoritiesFor(
     destination(id).type.eq(TxDestination.TYPE_ID)
   );
   const authorities = await Promise.all(
-    ids.map(async (identityID) => {
-      const response = await rpc.getIdentity(identityID);
-      const result = registrationRpcResult<any>(
-        response,
-        "getidentity authorization"
-      );
-      const json = await requireRegistrationIdentity(
-        { getIdentity: async () => response },
-        identityID
-      );
-
-      if (
-        !result ||
-        !/^[0-9a-f]{64}$/.test(result.txid) ||
-        !Number.isInteger(result.vout) ||
-        result.vout < 0 ||
-        result.vout > 0xffffffff ||
-        !Number.isSafeInteger(result.blockheight) ||
-        result.blockheight < 1 ||
-        result.blockheight > snapshot.tipHeight
-      ) {
-        throw new RegistrationError(
-          "INVALID_AUTHORITY_EVIDENCE",
-          "Signing authority requires a confirmed defining outpoint."
+    ids.map((identityID) =>
+      reuseVerifiedAuthority(snapshot, identityID, async () => {
+        const response = await rpc.getIdentity(identityID);
+        const result = registrationRpcResult<any>(
+          response,
+          "getidentity authorization"
         );
-      }
-
-      const [rawResponse, unspentResponse] = await registrationReadMany(
-        rpc,
-        [
-          ["getRawTransaction", result.txid, 0],
-          ["getTxOut", result.txid, result.vout, true],
-        ],
-        true
-      );
-      const raw = registrationRpcResult<any>(
-        rawResponse,
-        "getrawtransaction authorization"
-      );
-      const source = parseTransaction(typeof raw === "string" ? raw : raw?.hex);
-      const output = source.outs[result.vout];
-      if (source.getId() !== result.txid || !output) {
-        throw new RegistrationError(
-          "AUTHORITY_MISMATCH",
-          "Signing authority outpoint does not match its raw transaction."
-        );
-      }
-
-      // Check the RPC identity against its canonical on-chain definition before
-      // using its primary keys or signature threshold to authorize spending.
-      const script = new IdentityScript();
-      script.fromBuffer(output.script, 0, output.script.length);
-      const identity = script.getIdentity();
-      const primaryAddresses = identity.primaryAddresses!.map(
-        (key) => key.toAddress()!
-      );
-      if (
-        !identity.version.eqn(3) ||
-        identity.getIdentityAddress(snapshot.rootSystemName) !== identityID ||
-        !identity.toBuffer().equals(script.paramsOptCC.vData[0]) ||
-        identity.name !== json.name ||
-        identity.parent.toAddress() !== json.parent ||
-        identity.systemId.toAddress() !== json.systemid ||
-        identity.flags.toNumber() !== json.flags ||
-        identity.version.toNumber() !== json.version ||
-        identity.unlockAfter.toNumber() !== (json.timelock || 0) ||
-        identity.minSigs!.toNumber() !== json.minimumsignatures ||
-        JSON.stringify(primaryAddresses) !==
-          JSON.stringify(json.primaryaddresses) ||
-        !IdentityScript.fromIdentity(identity).toBuffer().equals(output.script)
-      ) {
-        throw new RegistrationError(
-          "AUTHORITY_MISMATCH",
-          "Signing authority identity differs from its canonical defining output."
-        );
-      }
-
-      // Both the defining transaction and the unspent response must describe
-      // the same confirmed output at the snapshot's tip.
-      const unspent = registrationRpcResult<any>(
-        unspentResponse,
-        "gettxout authorization"
-      );
-      if (!unspent)
-        throw new RegistrationError(
-          "AUTHORITY_CHANGED",
-          "Signing authority was spent or changed; refresh registration."
+        const json = await requireRegistrationIdentity(
+          { getIdentity: async () => response },
+          identityID
         );
 
-      if (unspent.bestblock !== snapshot.tipHash) {
-        throw new RegistrationError(
-          "STALE_CHAIN_CONTEXT",
-          "Chain tip changed while resolving signing authority."
-        );
-      }
+        if (
+          !result ||
+          !/^[0-9a-f]{64}$/.test(result.txid) ||
+          !Number.isInteger(result.vout) ||
+          result.vout < 0 ||
+          result.vout > 0xffffffff ||
+          !Number.isSafeInteger(result.blockheight) ||
+          result.blockheight < 1 ||
+          result.blockheight > snapshot.tipHeight
+        ) {
+          throw new RegistrationError(
+            "INVALID_AUTHORITY_EVIDENCE",
+            "Signing authority requires a confirmed defining outpoint."
+          );
+        }
 
-      if (
-        !Number.isSafeInteger(unspent.confirmations) ||
-        unspent.confirmations < 1 ||
-        snapshot.candidateHeight - unspent.confirmations !==
-          result.blockheight ||
-        unspent.scriptPubKey?.hex !== output.script.toString("hex") ||
-        !currencyAmountToAtomic(unspent.value).eq(new BN(output.value))
-      ) {
-        throw new RegistrationError(
-          "AUTHORITY_MISMATCH",
-          "Signing authority unspent state differs from its confirmed defining output."
+        const [rawResponse, unspentResponse] = await registrationReadMany(
+          rpc,
+          [
+            ["getRawTransaction", result.txid, 0],
+            ["getTxOut", result.txid, result.vout, true],
+          ],
+          true
         );
-      }
-
-      if (
-        isIdentityLockedAtHeight(identity, {
-          chainId: snapshot.systemID,
-          nextBlockHeight: snapshot.candidateHeight,
-        })
-      ) {
-        throw new RegistrationError(
-          "LOCKED_AUTHORITY",
-          "Registration signing authority is locked."
+        const raw = registrationRpcResult<any>(
+          rawResponse,
+          "getrawtransaction authorization"
         );
-      }
+        const source = parseTransaction(
+          typeof raw === "string" ? raw : raw?.hex
+        );
+        const output = source.outs[result.vout];
+        if (source.getId() !== result.txid || !output) {
+          throw new RegistrationError(
+            "AUTHORITY_MISMATCH",
+            "Signing authority outpoint does not match its raw transaction."
+          );
+        }
 
-      return {
-        identityID,
-        primaryAddresses,
-        minimumSignatures: identity.minSigs!.toNumber(),
-        revoked: identity.isRevoked(),
-      };
-    })
+        // Check the RPC identity against its canonical on-chain definition before
+        // using its primary keys or signature threshold to authorize spending.
+        const script = new IdentityScript();
+        script.fromBuffer(output.script, 0, output.script.length);
+        const identity = script.getIdentity();
+        const primaryAddresses = identity.primaryAddresses!.map(
+          (key) => key.toAddress()!
+        );
+        if (
+          !identity.version.eqn(3) ||
+          identity.getIdentityAddress(snapshot.rootSystemName) !== identityID ||
+          !identity.toBuffer().equals(script.paramsOptCC.vData[0]) ||
+          identity.name !== json.name ||
+          identity.parent.toAddress() !== json.parent ||
+          identity.systemId.toAddress() !== json.systemid ||
+          identity.flags.toNumber() !== json.flags ||
+          identity.version.toNumber() !== json.version ||
+          identity.unlockAfter.toNumber() !== (json.timelock || 0) ||
+          identity.minSigs!.toNumber() !== json.minimumsignatures ||
+          JSON.stringify(primaryAddresses) !==
+            JSON.stringify(json.primaryaddresses) ||
+          !IdentityScript.fromIdentity(identity)
+            .toBuffer()
+            .equals(output.script)
+        ) {
+          throw new RegistrationError(
+            "AUTHORITY_MISMATCH",
+            "Signing authority identity differs from its canonical defining output."
+          );
+        }
+
+        // Both the defining transaction and the unspent response must describe
+        // the same confirmed output at the snapshot's tip.
+        const unspent = registrationRpcResult<any>(
+          unspentResponse,
+          "gettxout authorization"
+        );
+        if (!unspent)
+          throw new RegistrationError(
+            "AUTHORITY_CHANGED",
+            "Signing authority was spent or changed; refresh registration."
+          );
+
+        if (unspent.bestblock !== snapshot.tipHash) {
+          throw new RegistrationError(
+            "STALE_CHAIN_CONTEXT",
+            "Chain tip changed while resolving signing authority."
+          );
+        }
+
+        if (
+          !Number.isSafeInteger(unspent.confirmations) ||
+          unspent.confirmations < 1 ||
+          snapshot.candidateHeight - unspent.confirmations !==
+            result.blockheight ||
+          unspent.scriptPubKey?.hex !== output.script.toString("hex") ||
+          !currencyAmountToAtomic(unspent.value).eq(new BN(output.value))
+        ) {
+          throw new RegistrationError(
+            "AUTHORITY_MISMATCH",
+            "Signing authority unspent state differs from its confirmed defining output."
+          );
+        }
+
+        if (
+          isIdentityLockedAtHeight(identity, {
+            chainId: snapshot.systemID,
+            nextBlockHeight: snapshot.candidateHeight,
+          })
+        ) {
+          throw new RegistrationError(
+            "LOCKED_AUTHORITY",
+            "Registration signing authority is locked."
+          );
+        }
+
+        const authority = {
+          identityID,
+          primaryAddresses,
+          minimumSignatures: identity.minSigs!.toNumber(),
+          revoked: identity.isRevoked(),
+        };
+        validateRegistrationIdentityAuthorities([authority]);
+        return authority;
+      })
+    )
   );
 
-  validateRegistrationIdentityAuthorities(authorities);
   return authorities;
 }
 
@@ -605,6 +645,25 @@ function registrationRelayFee(outputs: RegistrationPlannedOutput[]): BN {
   return new BN(units).muln(10000);
 }
 
+/** Include fresh costs when a saved estimate needs a new unsigned review. */
+function requireQuotedCosts(
+  quote: IdentityRegistrationQuote,
+  approvedCosts: RegistrationAmounts,
+  commitment: boolean
+): void {
+  const requiredCosts = commitment
+    ? quote.totalOperationRequired
+    : quote.totalRequired;
+  try {
+    requireAmounts(requiredCosts, approvedCosts);
+  } catch (error) {
+    if (error instanceof RegistrationError && error.code === "COST_LIMIT_EXCEEDED") {
+      throw new RegistrationError(error.code, error.message, { quote, requiredCosts });
+    }
+    throw error;
+  }
+}
+
 /** Update the quote for actual relay fees and enforce approved cost caps. */
 async function fundQuotedRegistration(
   rpc: RegistrationRpc,
@@ -660,24 +719,7 @@ async function fundQuotedRegistration(
 
     // Commitment approval covers both stages; reveal approval covers only the
     // remaining registration costs. Include the revised quote in the cap error.
-    const requiredCosts = commitment
-      ? quote.totalOperationRequired
-      : quote.totalRequired;
-    try {
-      requireAmounts(requiredCosts, approvedCosts);
-    } catch (error) {
-      if (
-        error instanceof RegistrationError &&
-        error.code === "COST_LIMIT_EXCEEDED"
-      ) {
-        throw new RegistrationError(error.code, error.message, {
-          quote,
-          requiredCosts,
-        });
-      }
-
-      throw error;
-    }
+    requireQuotedCosts(quote, approvedCosts, commitment);
 
     return funded;
   }
@@ -964,7 +1006,7 @@ export async function createNameReservationTransaction(
   const salt = Buffer.from(request.salt);
   const resolved = await resolveIdentityRegistration(rpc, request);
   const { policy, quote, snapshot } = resolved;
-  requireAmounts(quote.totalOperationRequired, request.approvedCosts);
+  requireQuotedCosts(quote, request.approvedCosts, true);
   await validateRegistrationChangeAddress(rpc, request.changeAddress, snapshot);
 
   const revealAuthorities = await authoritiesFor(
@@ -1011,37 +1053,20 @@ export async function createNameReservationTransaction(
     authorizationID: policy.requiredAuthorityID,
   });
 
-  // Check the supplied prevouts against the current quote for both stages.
-  const available: RegistrationAmounts = {};
-  const fundingPrevouts = await readRegistrationPrevouts(
+  // Prove coverage for both stages without querying unused funding candidates.
+  // The same ordered selector is used for the actual transaction below.
+  const fundingPrevouts = await selectRegistrationFunding(
     rpc,
+    snapshot,
     request.funding,
-    snapshot
+    quote.totalOperationRequired
   );
   fundingPrevouts.forEach((prevout, index) => {
-    addAmounts(available, prevout.values);
-
     // The request is detached from the caller. Reuse immutable transaction
     // bytes during fee calculation while continuing to refresh spendability.
     request.funding[index].rawTransaction = prevout.rawTransaction;
   });
 
-  const requireOperationFunds = () => {
-    if (
-      Object.keys(quote.totalOperationRequired).some((id) =>
-        atomic(available[id] || "0").lt(
-          atomic(quote.totalOperationRequired[id])
-        )
-      )
-    ) {
-      throw new RegistrationError(
-        "INSUFFICIENT_FUNDS",
-        "Approved funding must cover both the commitment and registration."
-      );
-    }
-  };
-
-  requireOperationFunds();
   const funded = await fundQuotedRegistration(
     rpc,
     resolved,
@@ -1059,8 +1084,15 @@ export async function createNameReservationTransaction(
     request.approvedCosts
   );
 
-  // Funding can raise the commitment fee, increasing the combined requirement.
-  requireOperationFunds();
+  // A larger change script can raise the commitment fee. Extend the verified
+  // prefix only if that leaves the original coverage short of the new total.
+  await selectRegistrationFunding(
+    rpc,
+    snapshot,
+    request.funding.slice(fundingPrevouts.length),
+    quote.totalOperationRequired,
+    fundingPrevouts
+  );
 
   return {
     reservation: record,
@@ -1256,7 +1288,7 @@ export async function createIdentityRegistrationTransaction(
     offer: request.offer,
     commitmentFee: request.commitmentFee,
   });
-  requireAmounts(quote.totalRequired, request.approvedCosts);
+  requireQuotedCosts(quote, request.approvedCosts, false);
 
   const identity =
     request.identity instanceof Identity

@@ -54,6 +54,13 @@ export type FundedRegistration = {
     prevouts: RegistrationPrevout[];
     outputPlan: RegistrationPlannedOutput[];
 };
+/**
+ * Verify the ordered funding prefix needed for every required currency.
+ * Known amounts select a group locally; an unknown amount ends that group so
+ * its raw transaction and spendability can be read together before proceeding.
+ * Existing verified inputs let a caller extend coverage after a fee increase.
+ */
+export declare function selectRegistrationFunding(rpc: RegistrationRpc, snapshot: RegistrationChainSnapshot, funding: RegistrationFundingInput[], needed: RegistrationAmounts, existing?: RegistrationPrevout[]): Promise<RegistrationPrevout[]>;
 /** Deterministic approved-input selection; the mandatory commitment is never coin-selected away. */
 export declare function fundRegistration(rpc: RegistrationRpc, snapshot: RegistrationChainSnapshot, outputs: RegistrationPlannedOutput[], nativeFee: string, funding: RegistrationFundingInput[], changeAddress: string, mandatory?: RegistrationPrevout): Promise<FundedRegistration>;
 /** Check all bytes other than signatures, plus raw prevout amounts and currency conservation. */
