@@ -26,7 +26,7 @@ import {
   RegistrationRead,
   registrationReadMany,
 } from "./registrationRpc";
-import { RegistrationError } from "./registrationPolicy";
+import { RegistrationError, registrationRpcResult } from "./registrationPolicy";
 import { verifyRegistrationFunding } from "./registrationFundingVerification";
 import {
   IdentityReservationScript,
@@ -52,6 +52,11 @@ export type RegistrationPrevout = RegistrationFundingInput & {
   confirmations: number;
   height: number;
 };
+/** Canonical authority evidence retained only while preparing a transaction. */
+export type RegistrationAuthorityOutpoint = Pick<
+  RegistrationPrevout,
+  "txid" | "vout" | "height" | "scriptHex" | "value"
+>;
 export type RegistrationChainSnapshot = {
   systemID: string;
   rootSystemName: string;
@@ -573,12 +578,22 @@ export async function readRegistrationPrevout(
 
 export async function assertRegistrationSnapshot(
   rpc: RegistrationRpc,
-  snapshot: RegistrationChainSnapshot
+  snapshot: RegistrationChainSnapshot,
+  authorityOutpoints: readonly RegistrationAuthorityOutpoint[] = []
 ): Promise<void> {
-  // The height is already known here, so neither read depends on the other.
-  const [info, block] = await registrationReadMany(rpc, [
+  // An unchanged tip does not rule out a pending identity update. Recheck each
+  // cached authority's defining output alongside the independent chain reads.
+  const [info, block, ...unspentResponses] = await registrationReadMany(rpc, [
     ["getInfo"],
     ["getBlock", String(snapshot.tipHeight), 1],
+    ...authorityOutpoints.map(
+      (outpoint): RegistrationRead => [
+        "getTxOut",
+        outpoint.txid,
+        outpoint.vout,
+        true,
+      ]
+    ),
   ]);
   if (info.error) throw new RegistrationError("RPC_ERROR", info.error.message);
   if (block.error)
@@ -595,6 +610,37 @@ export async function assertRegistrationSnapshot(
       "Chain context changed; resolve and review the registration again."
     );
   }
+
+  authorityOutpoints.forEach((outpoint, index) => {
+    const unspent = registrationRpcResult<any>(
+      unspentResponses[index],
+      "gettxout authorization"
+    );
+    if (!unspent)
+      throw new RegistrationError(
+        "AUTHORITY_CHANGED",
+        "Signing authority was spent or changed; refresh registration."
+      );
+
+    if (unspent.bestblock !== snapshot.tipHash)
+      throw new RegistrationError(
+        "STALE_CHAIN_CONTEXT",
+        "Chain tip changed while resolving signing authority."
+      );
+
+    if (
+      !Number.isSafeInteger(unspent.confirmations) ||
+      unspent.confirmations < 1 ||
+      snapshot.candidateHeight - unspent.confirmations !== outpoint.height ||
+      unspent.scriptPubKey?.hex !== outpoint.scriptHex ||
+      !currencyAmountToAtomic(unspent.value).eq(atomic(outpoint.value))
+    ) {
+      throw new RegistrationError(
+        "AUTHORITY_MISMATCH",
+        "Signing authority unspent state differs from its confirmed defining output."
+      );
+    }
+  });
 }
 
 export type FundedRegistration = {

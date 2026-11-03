@@ -17,6 +17,8 @@ export type RegistrationPrevout = RegistrationFundingInput & {
     confirmations: number;
     height: number;
 };
+/** Canonical authority evidence retained only while preparing a transaction. */
+export type RegistrationAuthorityOutpoint = Pick<RegistrationPrevout, "txid" | "vout" | "height" | "scriptHex" | "value">;
 export type RegistrationChainSnapshot = {
     systemID: string;
     rootSystemName: string;
@@ -48,7 +50,7 @@ export declare function paymentOutput(recipient: string, values: RegistrationAmo
  */
 export declare function readRegistrationPrevouts(rpc: RegistrationRpc, inputs: RegistrationFundingInput[], snapshot: RegistrationChainSnapshot, commitment?: boolean): Promise<RegistrationPrevout[]>;
 export declare function readRegistrationPrevout(rpc: RegistrationRpc, input: RegistrationFundingInput, snapshot: RegistrationChainSnapshot, commitment?: boolean): Promise<RegistrationPrevout>;
-export declare function assertRegistrationSnapshot(rpc: RegistrationRpc, snapshot: RegistrationChainSnapshot): Promise<void>;
+export declare function assertRegistrationSnapshot(rpc: RegistrationRpc, snapshot: RegistrationChainSnapshot, authorityOutpoints?: readonly RegistrationAuthorityOutpoint[]): Promise<void>;
 export type FundedRegistration = {
     txHex: string;
     prevouts: RegistrationPrevout[];

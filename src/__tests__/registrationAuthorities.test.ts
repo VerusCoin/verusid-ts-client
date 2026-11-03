@@ -1,6 +1,7 @@
 import BN from "bn.js";
 import { networks, TransactionBuilder } from "@bitgo/utxo-lib";
 import {
+  ApiRequest,
   CurrencyOptions,
   Identity,
   IdentityID,
@@ -28,7 +29,12 @@ function source(script: Buffer, value: number) {
   return tx.buildIncomplete();
 }
 
-function authorityFixture(flags = 0, unlockAfter = 0, identityFunding = false) {
+function authorityFixture(
+  flags = 0,
+  unlockAfter = 0,
+  identityFunding = false,
+  batched = false
+) {
   const identity = new Identity({
     version: new BN(3),
     flags: new BN(flags),
@@ -113,6 +119,18 @@ function authorityFixture(flags = 0, unlockAfter = 0, identityFunding = false) {
       )
     ),
   };
+  const requestMany = jest.fn(async (reads: ApiRequest[]) =>
+    Promise.all(
+      reads.map((read) => {
+        const method = Object.keys(rpc).find(
+          (name) => name.toLowerCase() === read.cmd
+        )!;
+        return (rpc as any)[method](...read.getParams());
+      })
+    )
+  );
+  if (batched) Object.assign(rpc, { requestMany });
+
   const request = {
     name: "NewUser",
     rootSystemName: "VRSC",
@@ -130,53 +148,164 @@ function authorityFixture(flags = 0, unlockAfter = 0, identityFunding = false) {
       rpc as unknown as VerusdRpcInterface,
       request
     );
-  return { build, declared, unspent, rpc, authority, request };
+  return { build, declared, unspent, rpc, authority, request, requestMany };
 }
 
 describe("registration authority evidence before commitment", () => {
-  test("shares verified authority evidence for change, controller and funding only within one preparation", async () => {
-    const fixture = authorityFixture(0, 0, true);
-    fixture.request.changeAddress = controllerID;
-    const { transaction } = await fixture.build();
+  test.each([false, true])(
+    "shares decoding but refreshes authority spendability before returning a plan, batched=%s",
+    async (batched) => {
+      const fixture = authorityFixture(0, 0, true, batched);
+      fixture.request.changeAddress = controllerID;
+      const { transaction } = await fixture.build();
 
-    const authorityLookups = () =>
-      fixture.rpc.getIdentity.mock.calls.filter(([id]) => id === controllerID);
-    const authorityUnspents = () =>
-      fixture.rpc.getTxOut.mock.calls.filter(
-        ([txid]) => txid === fixture.authority.getId()
+      const authorityLookups = () =>
+        fixture.rpc.getIdentity.mock.calls.filter(
+          ([id]) => id === controllerID
+        );
+      const authorityUnspents = () =>
+        fixture.rpc.getTxOut.mock.calls.filter(
+          ([txid]) => txid === fixture.authority.getId()
+        );
+      expect(authorityLookups()).toHaveLength(1);
+      expect(authorityUnspents()).toHaveLength(2);
+      expect(fixture.rpc.getRawTransaction).toHaveBeenCalledTimes(1);
+      expect(transaction.identityAuthorities).toEqual(
+        transaction.revealAuthorities
       );
-    expect(authorityLookups()).toHaveLength(1);
-    expect(authorityUnspents()).toHaveLength(1);
-    expect(fixture.rpc.getRawTransaction).toHaveBeenCalledTimes(1);
-    expect(transaction.identityAuthorities).toEqual(
-      transaction.revealAuthorities
-    );
 
-    // Frozen plans expose independent copies, including their nested key arrays.
-    expect(transaction.identityAuthorities[0]).not.toBe(
-      transaction.revealAuthorities[0]
-    );
-    expect(transaction.identityAuthorities[0].primaryAddresses).not.toBe(
-      transaction.revealAuthorities[0].primaryAddresses
-    );
-    expect(() => {
-      transaction.identityAuthorities[0].primaryAddresses[0] = "changed";
-    }).toThrow();
-    expect(transaction.revealAuthorities[0].primaryAddresses).toEqual([
-      key.toAddress(),
-    ]);
+      // One final check covers every use of this authority without another
+      // identity/raw-transaction lookup or an extra batch round trip.
+      if (batched) {
+        const batches = fixture.requestMany.mock.calls;
+        expect(
+          batches[batches.length - 1][0].map((read) => read.prepare())
+        ).toEqual([
+          [systemID, "getinfo", []],
+          [systemID, "getblock", ["100", 1]],
+          [systemID, "gettxout", [fixture.authority.getId(), 0, true]],
+        ]);
+      } else {
+        expect(fixture.requestMany).not.toHaveBeenCalled();
+      }
 
-    await fixture.build();
-    expect(authorityLookups()).toHaveLength(2);
-    expect(authorityUnspents()).toHaveLength(2);
-    expect(fixture.rpc.getRawTransaction).toHaveBeenCalledTimes(2);
+      // Frozen plans expose independent copies, including their nested key arrays.
+      expect(transaction.identityAuthorities[0]).not.toBe(
+        transaction.revealAuthorities[0]
+      );
+      expect(transaction.identityAuthorities[0].primaryAddresses).not.toBe(
+        transaction.revealAuthorities[0].primaryAddresses
+      );
+      expect(() => {
+        transaction.identityAuthorities[0].primaryAddresses[0] = "changed";
+      }).toThrow();
+      expect(transaction.revealAuthorities[0].primaryAddresses).toEqual([
+        key.toAddress(),
+      ]);
 
-    // A subsequent preparation must still detect a newly spent authority.
-    fixture.rpc.getTxOut.mockImplementation(async () => ok(null));
-    await expect(fixture.build()).rejects.toMatchObject({
-      code: "AUTHORITY_CHANGED",
-    });
-  });
+      await fixture.build();
+      expect(authorityLookups()).toHaveLength(2);
+      expect(authorityUnspents()).toHaveLength(4);
+      expect(fixture.rpc.getRawTransaction).toHaveBeenCalledTimes(2);
+
+      // A subsequent preparation must still detect a newly spent authority.
+      fixture.rpc.getTxOut.mockImplementation(async () => ok(null));
+      await expect(fixture.build()).rejects.toMatchObject({
+        code: "AUTHORITY_CHANGED",
+      });
+    }
+  );
+
+  test.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    "rejects an authority spent during preparation with an unchanged tip, identity funding=%s, batched=%s",
+    async (identityFunding, batched) => {
+      const fixture = authorityFixture(0, 0, identityFunding, batched);
+      fixture.request.changeAddress = controllerID;
+      const original = fixture.rpc.getTxOut.getMockImplementation()!;
+      let spent = false;
+
+      fixture.rpc.getTxOut.mockImplementation(async (txid) => {
+        if (txid === fixture.authority.getId() && spent) return ok(null);
+        const response = await original(txid);
+
+        // Identity funding loses its authority while funding is checked.
+        // R-address funding still needs the change/controller authority to
+        // remain spendable after its initial proof was cached.
+        if (
+          identityFunding
+            ? txid !== fixture.authority.getId()
+            : txid === fixture.authority.getId()
+        ) {
+          spent = true;
+        }
+        return response;
+      });
+
+      await expect(fixture.build()).rejects.toMatchObject({
+        code: "AUTHORITY_CHANGED",
+      });
+      expect(spent).toBe(true);
+      expect(fixture.rpc.getRawTransaction).toHaveBeenCalledTimes(1);
+      expect(
+        fixture.rpc.getIdentity.mock.calls.filter(([id]) => id === controllerID)
+      ).toHaveLength(1);
+    }
+  );
+
+  test.each([
+    [{ confirmations: 0 }, "AUTHORITY_MISMATCH"],
+    [{ confirmations: 50 }, "AUTHORITY_MISMATCH"],
+    [{ bestblock: "ff".repeat(32) }, "STALE_CHAIN_CONTEXT"],
+    [{ value: "1" }, "AUTHORITY_MISMATCH"],
+    [{ scriptPubKey: { hex: "51" } }, "AUTHORITY_MISMATCH"],
+  ])(
+    "rejects changed authority evidence in the final batch %s",
+    async (patch, code) => {
+      const fixture = authorityFixture(0, 0, false, true);
+      const original = fixture.rpc.getTxOut.getMockImplementation()!;
+      let authorityReads = 0;
+
+      fixture.rpc.getTxOut.mockImplementation(async (txid) => {
+        if (txid === fixture.authority.getId() && ++authorityReads > 1) {
+          return ok({ ...fixture.unspent, ...patch });
+        }
+        return original(txid);
+      });
+
+      await expect(fixture.build()).rejects.toMatchObject({ code });
+      expect(authorityReads).toBe(2);
+    }
+  );
+
+  test.each([false, true])(
+    "does not return a plan when the final authority check fails, transport rejection=%s",
+    async (rejected) => {
+      const fixture = authorityFixture(0, 0, false, true);
+      const original = fixture.rpc.getTxOut.getMockImplementation()!;
+      let authorityReads = 0;
+
+      fixture.rpc.getTxOut.mockImplementation(async (txid) => {
+        if (txid === fixture.authority.getId() && ++authorityReads > 1) {
+          if (rejected) throw new Error("Authority lookup unavailable");
+          return {
+            result: null,
+            error: { code: -1, message: "Authority lookup unavailable" },
+          } as any;
+        }
+        return original(txid);
+      });
+
+      await expect(fixture.build()).rejects.toThrow(
+        "Authority lookup unavailable"
+      );
+      expect(authorityReads).toBe(2);
+    }
+  );
 
   test.each([0, 99, 100])(
     "accepts an unlocked identity with elapsed timelock %s",

@@ -55,6 +55,7 @@ import {
 import {
   FundedRegistration,
   RegistrationAmounts,
+  RegistrationAuthorityOutpoint,
   RegistrationChainSnapshot,
   RegistrationFundingInput,
   RegistrationPlannedOutput,
@@ -406,17 +407,22 @@ function constrainRegistrationExpiry(
   }
 }
 
-// A snapshot belongs to one preparation. Keep fully verified proofs local to it;
-// a later preparation must check the identity and its spendability again.
+type VerifiedRegistrationAuthority = {
+  authority: RegistrationIdentityAuthority;
+  outpoint: RegistrationAuthorityOutpoint;
+};
+
+// A snapshot belongs to one preparation. Reuse canonical identity proofs, but
+// retain their outpoints for a fresh spendability check before returning a plan.
 const verifiedAuthorities = new WeakMap<
   RegistrationChainSnapshot,
-  Map<string, Promise<RegistrationIdentityAuthority>>
+  Map<string, Promise<VerifiedRegistrationAuthority>>
 >();
 
 async function reuseVerifiedAuthority(
   snapshot: RegistrationChainSnapshot,
   identityID: string,
-  verify: () => Promise<RegistrationIdentityAuthority>
+  verify: () => Promise<VerifiedRegistrationAuthority>
 ): Promise<RegistrationIdentityAuthority> {
   let proofs = verifiedAuthorities.get(snapshot);
   if (!proofs) {
@@ -433,9 +439,9 @@ async function reuseVerifiedAuthority(
     proofs.set(identityID, proof);
   }
 
-  // Each use gets its own proof and key list, so freezing a returned plan
+  // Each use gets its own authority and key list, so freezing a returned plan
   // cannot affect the proof used by another preparation step.
-  const authority = await proof;
+  const { authority } = await proof;
   return { ...authority, primaryAddresses: [...authority.primaryAddresses] };
 }
 
@@ -583,7 +589,16 @@ async function authoritiesFor(
           revoked: identity.isRevoked(),
         };
         validateRegistrationIdentityAuthorities([authority]);
-        return authority;
+        return {
+          authority,
+          outpoint: {
+            txid: result.txid,
+            vout: result.vout,
+            height: result.blockheight,
+            scriptHex: output.script.toString("hex"),
+            value: String(output.value),
+          },
+        };
       })
     )
   );
@@ -781,7 +796,16 @@ async function preparedTransaction(
   };
 
   validatePreparedIdentityRegistrationTransaction(result);
-  await assertRegistrationSnapshot(rpc, resolved.snapshot);
+  // Include every verified authority, even one used only for change or reveal.
+  // Identity-key proofs stay reusable; mempool spendability must remain fresh.
+  const proofs = await Promise.all(
+    verifiedAuthorities.get(resolved.snapshot)?.values() || []
+  );
+  await assertRegistrationSnapshot(
+    rpc,
+    resolved.snapshot,
+    proofs.map(({ outpoint }) => outpoint)
+  );
 
   return freezePrepared(result);
 }
