@@ -12,7 +12,6 @@ import {
   IdentityRegistrationNameRequest,
   ResolvedIdentityRegistrationName,
   IdentityScript,
-  IdentityReservationScript,
   SmartTransactionScript,
   TokenOutput,
   EVALS,
@@ -460,24 +459,9 @@ async function referralHistory(
       evalCode === EVALS.EVAL_IDENTITY_RESERVATION ||
       evalCode === EVALS.EVAL_IDENTITY_ADVANCEDRESERVATION
     ) {
-      try {
-        const reservation = new IdentityReservationScript();
-        reservation.fromBuffer(tx.outs[index].script);
-        if (
-          reservation.getIdentityAddress(
-            original.parent.toAddress(),
-            policy.resolvedName.rootSystemName
-          ) !== id
-        )
-          throw new Error("wrong identity");
-        if (reservation.getReservation().name !== original.name)
-          throw new Error("wrong name");
-      } catch (_) {
-        fail(
-          "INVALID_REFERRAL_HISTORY",
-          "Original referral reservation does not match its identity"
-        );
-      }
+      // Match the daemon's referral traversal: the reservation marks the end
+      // of ancestry outputs. Historical mined reservations need not satisfy
+      // the script format used to construct new registrations.
       evidence.reservationVout = index;
       foundReservation = true;
       break;

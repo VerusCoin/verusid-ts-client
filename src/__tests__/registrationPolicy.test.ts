@@ -24,6 +24,8 @@ import {
   resolveIdentityRegistrationPolicy,
 } from "../identity/registrationPolicy";
 
+const foundationReferral = require("./fixtures/foundationReferral.json");
+
 const systemID = nameAndParentAddrToIAddr("VRSC");
 const parentID = nameAndParentAddrToIAddr("community", systemID);
 const referralID = nameAndParentAddrToIAddr("Referrer", systemID);
@@ -311,6 +313,92 @@ describe("identity registration namespace policy and quotes", () => {
       ),
       totalRequired: { [systemID]: "8000000000" },
     });
+  });
+
+  test.each([false, true])(
+    "accepts the historical Foundation referral reservation with batching=%s",
+    async (batch) => {
+      const { history, rawTransaction, referralRecipients, reservationVout } =
+        foundationReferral;
+      const rpc = mockRpc();
+      const id = history.identity.identityaddress;
+      rpc.getIdentity.mockImplementation(async (requestedID) =>
+        requestedID === id ? ok({ identity: history.identity }) : missing()
+      );
+      rpc.getIdentityHistory.mockResolvedValue(ok({ history: [history] }));
+      rpc.getRawTransaction.mockResolvedValue(ok(rawTransaction));
+      rpc.getBlock.mockResolvedValue(
+        ok({
+          hash: history.blockhash,
+          height: history.height,
+          confirmations: 10,
+          tx: [history.output.txid],
+        })
+      );
+
+      // This mined reservation uses a legacy key index, distinct from the
+      // identity destination. Its trailing change is not referral ancestry.
+      const policy = await resolveIdentityRegistrationPolicy(
+        batch ? batchedPolicyRpc(rpc).scoped : rpc,
+        {
+          ...request,
+          referralID: id,
+          commitmentHeight: history.height + 1,
+          candidateHeight: history.height + 2,
+        }
+      );
+      expect(policy.referralRecipients).toEqual(referralRecipients);
+      expect(policy.referralEvidence).toEqual({
+        identityID: id,
+        firstHeight: history.height,
+        blockHash: history.blockhash,
+        txid: history.output.txid,
+        identityVout: history.output.voutnum,
+        reservationVout,
+      });
+      expect(quoteIdentityRegistration(policy)).toMatchObject({
+        registrationOffer: "8000000000",
+        nativeFee: "2000000000",
+        referralPayments: referralRecipients.map((recipient: string) => ({
+          recipient,
+          currencyID: systemID,
+          amount: "2000000000",
+        })),
+      });
+    }
+  );
+
+  test("rejects referral history without an original reservation output", async () => {
+    const { rpc, tx } = referralFixture();
+    tx.outs.pop();
+    rpc.getRawTransaction.mockResolvedValue(ok(tx.toHex()));
+    rpc.getIdentityHistory.mockResolvedValue(
+      ok({
+        history: [
+          {
+            identity: identityJSON("Referrer"),
+            height: 50,
+            blockhash: "ab".repeat(32),
+            output: { txid: tx.getId(), voutnum: 0 },
+          },
+        ],
+      })
+    );
+    rpc.getBlock.mockResolvedValue(
+      ok({
+        hash: "ab".repeat(32),
+        height: 50,
+        confirmations: 50,
+        tx: [tx.getId()],
+      })
+    );
+    await expect(
+      resolveIdentityRegistrationPolicy(rpc, {
+        ...request,
+        referralID,
+        commitmentHeight: 80,
+      })
+    ).rejects.toMatchObject({ code: "REFERRAL_HISTORY_UNAVAILABLE" });
   });
 
   test("batches referral evidence while refreshing its active-chain block and history", async () => {

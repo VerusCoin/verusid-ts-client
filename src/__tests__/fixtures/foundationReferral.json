@@ -1,0 +1,36 @@
+{
+  "source": "https://api.verus.services",
+  "description": "Public VRSC mainnet getidentityhistory and getrawtransaction responses for the original Verus Coin Foundation@ registration. Block responses in tests are mocked.",
+  "history": {
+    "blockhash": "00000000013b4f66b7b2c0e996e789dfc1c7c41b2f21915c8c91ae178b910fab",
+    "height": 800232,
+    "identity": {
+      "contentmap": {},
+      "flags": 0,
+      "identityaddress": "i5v3h9FWVdRFbNHU7DfcpGykQjRaHtMqu7",
+      "minimumsignatures": 1,
+      "name": "Verus Coin Foundation",
+      "parent": "i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV",
+      "primaryaddresses": [
+        "REpxm9bCLMiHRNVPA9unPBWixie7uHFA5C"
+      ],
+      "privateaddress": "zs1dycegwse0x67qvy2fksukcng3ekkgvly2qwjckj8fxraam33xu2y5jyh3yva0e4ywec9quedcud",
+      "recoveryauthority": "i5v3h9FWVdRFbNHU7DfcpGykQjRaHtMqu7",
+      "revocationauthority": "i5v3h9FWVdRFbNHU7DfcpGykQjRaHtMqu7",
+      "systemid": "i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV",
+      "timelock": 0,
+      "version": 1
+    },
+    "output": {
+      "txid": "7e9d7d5b6a4767292a1d1a5aac9ff3c9bdea31b26de40946f5712105da1cd94d",
+      "voutnum": 0
+    }
+  },
+  "rawTransaction": "0400008085202f89022eba65aeaecf909cd2255af06005d217107f4c7d5b9298dde44127a5964f6d08020000006b483045022100b4a6e1a1b345db35311ea7d4e86b62da3e8b369a162bcf17c73020317d19dfb40220273017ccb949b20a5d0be443b8746007da8bbb002b494a051db8974ce7ebfe3701210265b28d46ec01515fc2cb987dccd6d92b8ef4277499d78b7c41b3e4eadea4f552feffffff3a9a53b23c70a13e09bd7dcdf00e0e681ea32abb338367fbd817e55c078f8c5c01000000694c67010101012102a1705a320f13e82334492d2c4a99e8512242fd4ee14f169eeee8da588b8cbacc404e6d070633661ed3bfcfcfa5f00a4fe918841d5da1c7e00d0beee557666a7e1e2ffa892a4de384359454fd276a41b699d072fabe4151eef68fd5d8f015fc299affffffff050000000000000000fd42014604030001031491cc21744e838908652efd83e2e12243c590573e15041ac3e9024e040736ed171267f81ace1b67522c1c15041ac3e9024e040736ed171267f81ace1b67522c1ccc4cf704030e010115041ac3e9024e040736ed171267f81ace1b67522c1c4ca2010000000000000001143cdad2d09cbc6e164804af104b1f3f56f0d10d78010000001af5b8015c64d39ab44c60ead8317f9f5a9b6c4c15566572757320436f696e20466f756e646174696f6e00001ac3e9024e040736ed171267f81ace1b67522c1c1ac3e9024e040736ed171267f81ace1b67522c1c016931943a1979b5e0308a4da1cb62688e6d6433e4501d2c5a474987deee3137144a48978919d7e6a47670501b04030f010115041ac3e9024e040736ed171267f81ace1b67522c1c1b040310010115041ac3e9024e040736ed171267f81ace1b67522c1c75009435770000000024050403000000cc1b04030001011504e64f0bd4d191c789d3a96588391a04740e7ac9f975009435770000000024050403000000cc1b0403000101150431bd4ff83597300149666046d5ba64f67e1e6865750000000000000000851a040300010114a77fb8fc8659a18db1d1a7c7a9370ad4ba0fc36ccc4c66040312010115041ac3e9024e040736ed171267f81ace1b67522c1c4a15566572757320436f696e20466f756e646174696f6ee64f0bd4d191c789d3a96588391a04740e7ac9f945b60427fa6ae32394ccdf3efd90ead42ab07096388a4b1ec15aaf9eb4d01bb575c0d363e56d0000001976a914489f308d2a7dd9570a60aa33e2edc5c29a63b53e88acdd350c00fc350c000000000000000000000000",
+  "reservationVout": 3,
+  "referralRecipients": [
+    "i5v3h9FWVdRFbNHU7DfcpGykQjRaHtMqu7",
+    "iQUHYRcKtgB7xXV1y5NpvzSK3Qb6ToNAqg",
+    "i81XL8ZpuCo9jmWLv5L5ikdxrGuHrrpQLz"
+  ]
+}
