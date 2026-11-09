@@ -22,6 +22,7 @@ const {
   SmartTransactionScript,
   TokenOutput,
   TxDestination,
+  UnknownID,
 } = require("verus-typescript-primitives");
 const {
   fundRegistration,
@@ -47,6 +48,11 @@ const idDestination = (byte) =>
   new TxDestination(new IdentityID(Buffer.alloc(20, byte)));
 const A = keyDestination(keys[0]);
 const B = keyDestination(keys[1]);
+// A tag matching a real key hash still must not authorize spending.
+const TAG = new TxDestination(
+  new UnknownID(crypto.hash160(keys[6].getPublicKeyBuffer())),
+  TxDestination.TYPE_INDEX
+);
 const ID = idDestination(41);
 const ID_CHANGE = idDestination(42);
 const R_CHANGE = keyDestination(keys[4]);
@@ -124,6 +130,8 @@ const smartOutput = (auth, reserves, master = "matching") => {
   return new SmartTransactionScript(
     master === "empty"
       ? condition(EVALS.EVAL_NONE, [], 0)
+      : master === "tagged"
+      ? condition(EVALS.EVAL_NONE, [TAG], 1)
       : condition(EVALS.EVAL_NONE, auth.destinations, auth.threshold),
     params
   ).toBuffer();
@@ -390,6 +398,17 @@ const cases = [
     ],
     exact: true,
   },
+
+  {
+    name: "tagged native key and single reserve identity funding with a commitment",
+    inputs: [input("native", "a", "tagged"), input("single", "identity", "tagged"), input("p2pkh", "b")],
+    commitmentValue: 0,
+  },
+  {
+    name: "tagged native identity and multi-reserve mixed-threshold funding",
+    inputs: [input("native", "identity", "tagged"), input("multi", "mixed", "tagged"), input("p2pkh", "b")],
+    identityChange: true,
+  },
 ];
 
 const build = async (spec) => {
@@ -655,5 +674,73 @@ describe("heterogeneous identity registration funding through signing and merge"
         partialTransactions: [original.txHex],
       }).signingStatus
     ).toBe("complete");
+  });
+});
+
+
+describe("registration tags remain metadata at every funding boundary", () => {
+  test("a private key matching the tag cannot authorize the tagged input", async () => {
+    const { args } = await build({
+      inputs: [input("native", "a", "tagged"), input("p2pkh", "b")],
+    });
+    const inspected = inspectIdentityRegistrationSignatures(args);
+    expect(inspected.inputs[0].threshold).toBe(1);
+    expect(inspected.inputs[0].requirements).toHaveLength(1);
+    expect(inspected.inputs[0].requirements[0].eligibleKeyIDs).toEqual([keys[0].getAddress()]);
+    expect(() => signIdentityRegistrationTransaction({
+      ...args, keys: [[keys[6].toWIF()], []],
+    })).toThrow(/Cannot prove this key authorizes/);
+  });
+
+  const invalidMasters = [
+    ["different key authorization", smart => { smart.masterOptCC.destinations = [B]; }],
+    ["different identity authorization", smart => { smart.masterOptCC.destinations = [ID]; }],
+    ["zero tag threshold", smart => { smart.masterOptCC.m = new BN(0); }],
+    ["two master destinations", smart => {
+      smart.masterOptCC.destinations = [TAG, B]; smart.masterOptCC.n = new BN(2);
+    }],
+    ["master payload", smart => { smart.masterOptCC.vData = [Buffer.from([1])]; }],
+    ["master eval", smart => { smart.masterOptCC.evalCode = new BN(EVALS.EVAL_RESERVE_OUTPUT); }],
+    ["master version", smart => { smart.masterOptCC.version = new BN(2); }],
+    ["short tag hash", smart => {
+      smart.masterOptCC.destinations = [new TxDestination(new UnknownID(Buffer.alloc(19, 7)), TxDestination.TYPE_INDEX)];
+    }],
+    ["long tag hash", smart => {
+      smart.masterOptCC.destinations = [new TxDestination(new UnknownID(Buffer.alloc(21, 7)), TxDestination.TYPE_INDEX)];
+    }],
+    ["tag as spending authority", smart => { smart.paramsOptCC.destinations = [TAG]; }],
+  ];
+
+  describe.each([false, true])("reserve output: %s", reserves => {
+    test.each(invalidMasters)("rejects %s during selection, accounting, and signing", async (_label, mutate) => {
+      const values = reserves ? { [TOKEN]: "40" } : {};
+      const smart = new SmartTransactionScript();
+      smart.fromBuffer(smartOutput(authorizations.a, values, "tagged"));
+      mutate(smart);
+      const invalidSource = source(smart.toBuffer(), 1000);
+      const paymentScript = reserves
+        ? smartOutput({ destinations: [RECIPIENT], threshold: 1 }, values)
+        : address.toOutputScript(RECIPIENT.toAddress(), network);
+      const outputs = [{
+        role: "issuer-payment", scriptHex: paymentScript.toString("hex"),
+        value: "900", values: { [SYSTEM]: "900", ...values },
+      }];
+      const builder = new TransactionBuilder(network);
+      builder.setVersion(4); builder.setVersionGroupId(0x892f2085);
+      builder.setExpiryHeight(snapshot.expiryHeight);
+      builder.addInput(invalidSource.txid, invalidSource.vout);
+      builder.addOutput(paymentScript, 900);
+      const funded = {txHex: builder.buildIncomplete().toHex(), prevouts: [invalidSource], outputPlan: outputs};
+      const approval = {snapshot, nativeFee: FEE, changeAddress: R_CHANGE.toAddress(), outputs};
+      await expect(fundRegistration(
+        rpcFor([invalidSource]), snapshot, outputs, FEE, [invalidSource], R_CHANGE.toAddress()
+      )).rejects.toThrow();
+      // Independent calls prevent a selector rejection from concealing a
+      // permissive downstream accounting or signature authorization check.
+      expect(() => verifyRegistrationFunding(funded, approval)).toThrow();
+      expect(() => inspectIdentityRegistrationSignatures({
+        txHex: funded.txHex, prevouts: funded.prevouts, identityAuthorities,
+      })).toThrow();
+    });
   });
 });

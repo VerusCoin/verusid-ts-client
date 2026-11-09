@@ -684,3 +684,69 @@ test.each(['threshold', 'length', 'type'] as const)('rejects a malformed %s in a
   template.outs[1].script = candidate.outs[1].script;
   expect(() => verifyIdentityUpdateFunding({...approval, txHex: candidate.toHex(), unfundedTxHex: template.toHex()})).toThrow();
 });
+
+
+const taggedFundingBalances: [string, Values][] = [
+  ['native', {[CHAIN]: '1000000'}],
+  ['native and reserve', {[CHAIN]: '1000000', [TOKEN]: '900000000000000001'}],
+];
+
+test.each(taggedFundingBalances)('funds, signs and independently verifies an identity update from tagged %s inputs',
+  async (_name, balances) => {
+    const f = fixture('plain', [balances]);
+    f.replaceSourceScript(taggedOutput(balances).script);
+    const result = await f.build();
+    const approved = approvalOf(result);
+    expect(verifyIdentityUpdateFunding(approved, result.hex, result.utxos, lockContext)).toBe(true);
+    const signed = f.client.signUpdateIdentityTransaction(result.hex, result.utxos,
+      result.utxos.map(() => [key.toWIF()]), approved, lockContext);
+    expect(verifyIdentityUpdateFunding(approved, signed, result.utxos, lockContext)).toBe(true);
+  }
+);
+
+test('binds tagged funding to the actual recipient, independently of its index tag', async () => {
+  const balances = {[CHAIN]: '1000000'};
+  const f = fixture('plain', [balances]);
+  f.replaceSourceScript(taggedOutput(balances).script);
+  const result = await f.build();
+  const approval: IdentityUpdateFundingApproval = JSON.parse(JSON.stringify(approvalOf(result)));
+  approval.prevouts.find(input => input.txid === f.utxos[0].txid)!.address = CHANGE;
+  expect(() => verifyIdentityUpdateFunding(approval)).toThrow(/indexed address/);
+  f.utxos[0].address = CHANGE;
+  await expect(f.build()).rejects.toThrow(/indexed address/);
+});
+
+test.each(['threshold', 'count', 'length', 'type', 'data', 'eval', 'alternate recipient'] as const)(
+  'rejects a tagged funding input with an invalid %s master', async invalid => {
+    const balances = {[CHAIN]: '1000000'};
+    const f = fixture('plain', [balances]);
+    const smart = new SmartTransactionScript();
+    smart.fromBuffer(taggedOutput(balances).script);
+    if (invalid === 'threshold') smart.masterOptCC.m = new BN(0);
+    else if (invalid === 'count') smart.masterOptCC.n = new BN(2);
+    else if (invalid === 'length') (smart.masterOptCC.destinations[0].data as any).bytes = Buffer.alloc(19, 1);
+    else if (invalid === 'type') smart.masterOptCC.destinations[0].type = TxDestination.TYPE_QUANTUM;
+    else if (invalid === 'data') smart.masterOptCC.vData = [Buffer.from([1])];
+    else if (invalid === 'eval') smart.masterOptCC.evalCode = new BN(EVALS.EVAL_RESERVE_OUTPUT);
+    else smart.masterOptCC.destinations = [new TxDestination(new KeyID(Buffer.alloc(20, 42)), TxDestination.TYPE_PKH)];
+    // Rebind the raw transaction, indexed UTXO and selected input together so
+    // rejection checks the authorization shape rather than a stale source hash.
+    f.replaceSourceScript(smart.toBuffer());
+    await expect(f.build()).rejects.toThrow();
+  }
+);
+
+test('keeps unapproved tagged change forbidden when spending an allowed tagged input', async () => {
+  const balances = {[CHAIN]: '1000000'};
+  const f = fixture('plain', [balances]);
+  f.replaceSourceScript(taggedOutput(balances).script);
+  const result = await f.build();
+  const changed = Transaction.fromHex(result.hex, networks.verus);
+  changed.outs[1] = Transaction.fromHex(
+    VerusIdInterface.createUnfundedCurrencyTransferTransaction(CHAIN,
+      [{currencies: {[CHAIN]: '990000'}, address: destination(CHANGE), vdxftag: INVOICE_TAG}], HEIGHT + 20),
+    networks.verus,
+  ).outs[0];
+  const approval = {...approvalOf(result), txHex: changed.toHex()};
+  expect(() => verifyIdentityUpdateFunding(approval)).toThrow(/alternate output authorization/);
+});

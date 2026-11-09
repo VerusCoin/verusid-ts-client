@@ -4,6 +4,7 @@ import {
   EVALS,
   I_ADDR_VERSION,
   R_ADDR_VERSION,
+  OptCCParams,
   fromBase58Check,
   toBase58Check,
   SmartTransactionScript,
@@ -145,6 +146,20 @@ function parseScript<
   return parsed;
 }
 
+/** Canonical invoice index metadata, separate from the recipient's signing condition. */
+function isIndexMaster(master: OptCCParams): boolean {
+  return (
+    master.version.eqn(3) &&
+    master.evalCode.eqn(EVALS.EVAL_NONE) &&
+    !master.vData.length &&
+    master.m.eqn(1) &&
+    master.n.eqn(1) &&
+    master.destinations.length === 1 &&
+    master.destinations[0].type.eq(TxDestination.TYPE_INDEX) &&
+    master.destinations[0].data.toBuffer().length === PUBLIC_KEY_HASH_LENGTH
+  );
+}
+
 /**
  * Decode an ordinary native/reserve output. Special protocol outputs are
  * handled by their callers. An expected recipient restricts payment/change
@@ -226,11 +241,8 @@ function ordinaryOutput(
     master.destinations.every((dest, i) =>
       dest.toBuffer().equals(condition.destinations[i].toBuffer())
     );
-  // A tag is permitted only on an explicitly approved payment output.
-  const indexMaster = allowIndexMaster &&
-    master.m.eqn(1) && master.n.eqn(1) && master.destinations.length === 1 &&
-    master.destinations[0].type.eq(TxDestination.TYPE_INDEX) &&
-    master.destinations[0].data.toBuffer().length === PUBLIC_KEY_HASH_LENGTH;
+  // Tags are metadata on funding inputs or explicitly approved payment outputs.
+  const indexMaster = allowIndexMaster && isIndexMaster(master);
   requireCondition(
     emptyMaster || sameMaster || indexMaster,
     "Unexpected alternate output authorization."
@@ -297,6 +309,7 @@ export {
   amountMap,
   transaction,
   parseScript,
+  isIndexMaster,
   ordinaryOutput,
   requireCondition,
 };

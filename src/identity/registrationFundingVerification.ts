@@ -235,7 +235,7 @@ function verify(
       commitmentCount++;
       add(incoming, commitmentInput(output, systemID));
     } else {
-      add(incoming, ordinaryOutput(output, systemID));
+      add(incoming, ordinaryOutput(output, systemID, undefined, true));
     }
   }
 

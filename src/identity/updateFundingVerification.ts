@@ -239,7 +239,7 @@ function fundingOutput(
     return new Map([[systemID, nativeAmount(output.value)]]);
   }
 
-  const values = ordinaryOutput(output, systemID);
+  const values = ordinaryOutput(output, systemID, undefined, true);
   if (expectedAddress) {
     validAddress(expectedAddress);
 

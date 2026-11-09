@@ -19,6 +19,7 @@ import {
   SmartTransactionSignatures,
   Transaction,
 } from "@bitgo/utxo-lib";
+import { isIndexMaster } from "./fundingPrimitives";
 
 /** Raw source bytes are required, including for zero-value commitment inputs. */
 export interface RegistrationSigningPrevout {
@@ -370,6 +371,7 @@ function parseInput(
     params.evalCode.eqn(EVALS.EVAL_RESERVE_OUTPUT)
   ) {
     if (
+      !isIndexMaster(master) &&
       !(master.m.eqn(0) && master.n.eqn(0)) &&
       !(
         master.m.eq(params.m) &&

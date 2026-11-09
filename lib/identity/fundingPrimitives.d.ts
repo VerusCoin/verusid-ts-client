@@ -1,4 +1,5 @@
 import BigNumber from "bignumber.js";
+import { OptCCParams } from "verus-typescript-primitives";
 /** Currency IDs mapped to exact amounts in atomic units. */
 type Amounts = Map<string, BigNumber>;
 type Output = {
@@ -21,11 +22,13 @@ declare function parseScript<T extends {
     fromBuffer(bytes: Buffer, offset: number, length: number): unknown;
     toBuffer(): Buffer;
 }>(Type: new () => T, bytes: Buffer): T;
+/** Canonical invoice index metadata, separate from the recipient's signing condition. */
+declare function isIndexMaster(master: OptCCParams): boolean;
 /**
  * Decode an ordinary native/reserve output. Special protocol outputs are
  * handled by their callers. An expected recipient restricts payment/change
  * to that single destination, even though funding may use multiple signers.
  */
 declare function ordinaryOutput(output: Output, systemID: string, expectedRecipient?: string, allowIndexMaster?: boolean): Amounts;
-export { amount, nativeAmount, add, sameAmounts, validAddress, amountMap, transaction, parseScript, ordinaryOutput, requireCondition, };
+export { amount, nativeAmount, add, sameAmounts, validAddress, amountMap, transaction, parseScript, isIndexMaster, ordinaryOutput, requireCondition, };
 export type { Amounts, Output };

@@ -28,6 +28,7 @@ import {
 } from "./registrationRpc";
 import { RegistrationError, registrationRpcResult } from "./registrationPolicy";
 import { verifyRegistrationFunding } from "./registrationFundingVerification";
+import { isIndexMaster } from "./fundingPrimitives";
 import {
   IdentityReservationScript,
   IdentityScript,
@@ -258,6 +259,7 @@ export function readFundingOutput(
     !condition.n.eqn(condition.destinations.length) ||
     condition.destinations.length > 25 ||
     !(
+      isIndexMaster(master) ||
       (master.m.isZero() && master.n.isZero() && !master.destinations.length) ||
       (master.m.eq(condition.m) &&
         master.n.eq(condition.n) &&
